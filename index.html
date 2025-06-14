@@ -28,14 +28,14 @@
   <!-- Step 1: Select Wormhole -->
   <div id="step-1" class="step active">
     <h2>Step 1: Choose Wormhole</h2>
-    <input type="text" id="wh-search" placeholder="Type wormhole code…" autocomplete="off"/>
+    <input type="text" id="wh-search" placeholder="Type wormhole code…" autocomplete="off" />
     <div id="suggestions"></div>
     <div id="wh-details"></div>
   </div>
   
   <!-- Step 2: State & Goal -->
   <div id="step-2" class="step">
-    <h2>Step 2: State &amp; Goal</h2>
+    <h2>Step 2: State & Goal</h2>
     <label>
       Current Status:
       <select id="status-select">
@@ -59,12 +59,12 @@
     <h2>Step 3: Enter Ship Mass</h2>
     <label>
       Cold Mass (kg):
-      <input type="number" id="cold-mass" placeholder="e.g. 1650000"/>
+      <input type="number" id="cold-mass" placeholder="e.g. 1650000" />
     </label>
     <br><br>
     <label>
       Hot Mass (kg):
-      <input type="number" id="hot-mass" placeholder="e.g. 2475000"/>
+      <input type="number" id="hot-mass" placeholder="e.g. 2475000" />
     </label>
   </div>
 
@@ -75,11 +75,19 @@
     <pre id="initial-steps"></pre>
   </div>
 
-  <!-- Step 5: Return Jump Instructions -->
+  <!-- Step 5: Return Jump (Interactive) -->
   <div id="step-5" class="step">
     <h2>Step 5: Return Jump</h2>
-    <p>After your initial jump, observe the hole’s state (Stable or Unstable), then choose the appropriate return instructions below:</p>
-    <div id="return-instructions"></div>
+    <p>Select the hole’s observed state after your initial jump:</p>
+    <label>
+      Hole State:
+      <select id="return-state">
+        <option value="stable">Stable (50–100%)</option>
+        <option value="unstable">Unstable (10–50%)</option>
+        <option value="critical">Critical (0–10%)</option>
+      </select>
+    </label>
+    <div id="return-suggestion" style="margin-top:1rem;"></div>
   </div>
 
   <!-- Wizard Navigation -->
@@ -98,10 +106,11 @@
     let currentStep = 1;
     let currentWH = null;
     let startMass = 0, goalMass = 0;
-    let shipCount = 0, initCold = 0, initHot = 0, remAfterInit = 0;
+    let shipCount = 0, remAfterInit = 0;
+    let retClose = { cold:0, hot:0 }, retCrit = { cold:0, hot:0 };
 
-    // UI references
-    const steps       = {1: '#step-1', 2: '#step-2', 3: '#step-3', 4: '#step-4', 5: '#step-5'};
+    // UI refs
+    const steps       = {1:'#step-1',2:'#step-2',3:'#step-3',4:'#step-4',5:'#step-5'};
     const btnNext     = document.getElementById('btn-next');
     const btnBack     = document.getElementById('btn-back');
     const btnReset    = document.getElementById('btn-reset');
@@ -114,166 +123,169 @@
     const hotInput    = document.getElementById('hot-mass');
     const initSummary = document.getElementById('initial-summary');
     const initSteps   = document.getElementById('initial-steps');
-    const returnDiv   = document.getElementById('return-instructions');
+    const returnState = document.getElementById('return-state');
+    const returnDiv   = document.getElementById('return-suggestion');
 
     function showStep(n) {
       Object.values(steps).forEach(sel => document.querySelector(sel).classList.remove('active'));
       document.querySelector(steps[n]).classList.add('active');
-      btnBack.disabled = (n === 1);
-      btnNext.textContent = n === 5 ? 'Finish' : 'Next';
+      btnBack.disabled = (n===1);
+      btnNext.textContent = n===5 ? 'Finish' : 'Next';
     }
 
-    // Reset wizard
+    // Reset
     btnReset.onclick = () => {
-      currentStep = 1; currentWH = null;
-      startMass = goalMass = 0;
-      shipCount = initCold = initHot = remAfterInit = 0;
-      whSearch.value = ''; suggestions.innerHTML = ''; whDetails.innerHTML = '';
-      coldInput.value = ''; hotInput.value = '';
-      initSummary.textContent = ''; initSteps.textContent = '';
-      returnDiv.innerHTML = '';
+      currentStep=1; currentWH=null; startMass=goalMass=0;
+      shipCount=remAfterInit=0; retClose={}; retCrit={};
+      whSearch.value=''; suggestions.innerHTML=''; whDetails.innerHTML='';
+      coldInput.value=''; hotInput.value='';
+      initSummary.textContent=''; initSteps.textContent='';
+      returnDiv.innerHTML='';
       showStep(1);
     };
 
     btnBack.onclick = () => {
-      if (currentStep > 1) {
-        currentStep--;
-        showStep(currentStep);
-      }
+      if(currentStep>1){ currentStep--; showStep(currentStep); }
     };
 
     btnNext.onclick = () => {
-      // Step 1 validation
-      if (currentStep === 1 && !currentWH) {
+      // Step 1
+      if(currentStep===1 && !currentWH){
         alert('Please select a wormhole.'); return;
       }
-      // Step 2 compute masses
-      if (currentStep === 2) {
-        const percMap = { stable: 1, unstable: 0.5, critical: 0.1 };
-        startMass = Math.round(currentWH.totalMass * percMap[statusSel.value]);
-        goalMass  = goalSel.value === 'close'
+      // Step 2
+      if(currentStep===2){
+        const pct={stable:1,unstable:0.5,critical:0.1}[statusSel.value];
+        startMass = Math.round(currentWH.totalMass * pct);
+        goalMass  = (goalSel.value==='close')
           ? 0
           : Math.round(currentWH.totalMass * 0.1);
       }
-      // Step 3 validation & initial plan
-      if (currentStep === 3) {
-        if (!coldInput.value || !hotInput.value) {
+      // Step 3
+      if(currentStep===3){
+        if(!coldInput.value||!hotInput.value){
           alert('Enter both cold and hot mass.'); return;
         }
         buildInitialPlan();
       }
-      // Step 4 -> Step 5 return plan
-      if (currentStep === 4) {
-        buildReturnInstructions();
+      // Step 4 → prepare Step 5
+      if(currentStep===4){
+        prepareReturnData();
+        updateReturnSuggestion();
       }
-      // Advance or finish
-      if (currentStep < 5) {
-        currentStep++;
-        showStep(currentStep);
+      // advance/finish
+      if(currentStep<5){
+        currentStep++; showStep(currentStep);
       } else {
-        alert('All set! Follow the steps in-game.');
+        alert('Done – follow the steps in-game!');
       }
     };
 
     // --- Step 1: search & select ---
     whSearch.oninput = () => {
-      const q = whSearch.value.trim().toUpperCase();
-      suggestions.innerHTML = '';
-      whDetails.innerHTML = '';
-      currentWH = null;
-      if (!q) return;
+      const q=whSearch.value.trim().toUpperCase();
+      suggestions.innerHTML=''; whDetails.innerHTML=''; currentWH=null;
+      if(!q) return;
       wormholes
-        .filter(w => w.type.startsWith(q))
+        .filter(w=>w.type.startsWith(q))
         .slice(0,8)
-        .forEach(w => {
-          const d = document.createElement('div');
-          d.className = 'suggestion';
-          d.textContent = w.type;
-          d.onclick = () => selectWH(w);
+        .forEach(w=>{
+          const d=document.createElement('div');
+          d.className='suggestion';
+          d.textContent=w.type;
+          d.onclick=()=>selectWH(w);
           suggestions.appendChild(d);
         });
     };
 
-    function selectWH(w) {
-      currentWH = { ...w };
-      whSearch.value = w.type;
-      suggestions.innerHTML = '';
-      let html = `<strong>${w.type}</strong><ul>
+    function selectWH(w){
+      currentWH={...w};
+      whSearch.value=w.type;
+      suggestions.innerHTML='';
+      let html=`<strong>${w.type}</strong><ul>
         <li>From: ${w.from||'—'}</li>
         <li>To: ${w.to}</li>
         <li>Total Mass: ${w.totalMass.toLocaleString()}</li>
         <li>Max Jump Mass: ${w.maxIndividualMass.toLocaleString()}</li>
         <li>Class: ${w.classification}</li>
         <li>Max Stable Time: ${w.maxStableTime} h</li>`;
-      if (w.massRegeneration) {
-        html += `<li>Regen: ${w.massRegeneration.toLocaleString()}/s</li>`;
+      if(w.massRegeneration){
+        html+=`<li>Regen: ${w.massRegeneration.toLocaleString()}/s</li>`;
       }
-      html += `</ul>`;
-      whDetails.innerHTML = html;
+      html+=`</ul>`;
+      whDetails.innerHTML=html;
     }
 
-    // --- Step 4: initial jump plan (one action) ---
-    function buildInitialPlan() {
-      const cold = parseInt(coldInput.value,10);
-      const hot  = parseInt(hotInput.value,10);
-      const diff = Math.max(0, startMass - goalMass);
-      const maxInd = currentWH.maxIndividualMass;
-
-      // number of ships needed for full closure:
-      shipCount = Math.ceil(diff / (hot+hot));
-
-      // initial: use 1 cold + (N-1) hot
-      initCold = 1;
-      initHot  = shipCount - 1;
-      const waveMass = initCold * cold + initHot * hot;
-      remAfterInit = startMass - waveMass;
-
-      initSummary.textContent =
-        `Use ${shipCount} ship${shipCount>1?'s':''}: ` +
-        `${initCold} cold + ${initHot} hot to probe the state.`;
-      initSteps.textContent = [
-        `Total starting mass: ${startMass.toLocaleString()} kg`,
-        `Initial jump mass: ${waveMass.toLocaleString()} kg`,
-        `Remaining (estimated): ${remAfterInit.toLocaleString()} kg`
+    // --- Step 4: initial plan ---
+    function buildInitialPlan(){
+      const cold=parseInt(coldInput.value,10),
+            hot =parseInt(hotInput.value,10),
+            diff=Math.max(0,startMass-goalMass);
+      shipCount = Math.ceil(diff/(hot+hot));
+      remAfterInit = startMass - (cold + hot*(shipCount-1));
+      initSummary.textContent=
+        `Use ${shipCount} ships: 1 cold & ${shipCount-1} hot test jump.`;
+      initSteps.textContent=[
+        `Start mass: ${startMass.toLocaleString()} kg`,
+        `Jump mass: ${(cold + (shipCount-1)*hot).toLocaleString()} kg`,
+        `Est. remaining: ${remAfterInit.toLocaleString()} kg`
       ].join('\n');
     }
 
-    // --- Step 5: return instructions ---
-    function computeReturn(diff) {
-      const cold = parseInt(coldInput.value,10);
-      const hot  = parseInt(hotInput.value,10);
-      for (let h = 0; h <= shipCount; h++) {
-        const c = shipCount - h;
-        if (h * hot + c * cold >= diff) {
-          return { cold: c, hot: h };
-        }
-      }
-      // fallback to all hot
-      return { cold: 0, hot: shipCount };
+    // --- Prepare return data ---
+    function prepareReturnData(){
+      const total=currentWH.totalMass,
+            thresh10=Math.round(total*0.1),
+            needClose=remAfterInit - 0,
+            needCrit =remAfterInit - thresh10;
+      retClose = computeReturn(needClose);
+      retCrit  = computeReturn(needCrit);
+      returnState.onchange = updateReturnSuggestion;
     }
 
-    function buildReturnInstructions() {
-      const total = currentWH.totalMass;
-      const threshCrit = Math.round(total * 0.1);
+    function computeReturn(diff){
+      const cold=parseInt(coldInput.value,10),
+            hot =parseInt(hotInput.value,10);
+      for(let h=0; h<=shipCount; h++){
+        const c=shipCount-h;
+        if(h*hot + c*cold >= diff){
+          return { cold:c, hot:h };
+        }
+      }
+      return { cold:0, hot:shipCount };
+    }
 
-      // mass to move from remAfterInit
-      const needClose = remAfterInit - 0;
-      const needCrit  = remAfterInit - threshCrit;
+    function computePassable(coldCount, hotCount){
+      let rem = remAfterInit,
+          hotMass=parseInt(hotInput.value,10),
+          coldMass=parseInt(coldInput.value,10);
+      const hotPass = Math.min(hotCount, Math.floor(rem/hotMass));
+      rem -= hotPass*hotMass;
+      const coldPass = Math.min(coldCount, Math.floor(rem/coldMass));
+      const stranded = (coldCount + hotCount) - (hotPass + coldPass);
+      return { hotPass, coldPass, stranded };
+    }
 
-      const retClose = computeReturn(needClose);
-      const retCrit  = computeReturn(needCrit);
-
-      returnDiv.innerHTML = `
-        <h3>If Stable:</h3>
-        <p><strong>To Close:</strong> ${retClose.cold} cold & ${retClose.hot} hot</p>
-        <p><strong>To Crit:</strong>  ${retCrit.cold} cold & ${retCrit.hot} hot</p>
-        <h3>If Unstable:</h3>
-        <p><strong>To Close:</strong> ${retClose.cold} cold & ${retClose.hot} hot</p>
-        <p><strong>To Crit:</strong>  ${retCrit.cold} cold & ${retCrit.hot} hot</p>
+    function updateReturnSuggestion(){
+      const st=returnState.value.charAt(0).toUpperCase()+returnState.value.slice(1);
+      const cClose = computePassable(retClose.cold, retClose.hot),
+            cCrit  = computePassable(retCrit.cold,  retCrit.hot);
+      returnDiv.innerHTML=`
+        <p><strong>If ${st}:</strong></p>
+        <p><em>To Close:</em> ${retClose.cold} cold & ${retClose.hot} hot`+
+        (cClose.stranded
+          ? ` → ${cClose.stranded} ship${cClose.stranded>1?'s':''} may not pass`
+          : ` (all will pass)`)
+        +`</p>
+        <p><em>To Crit:</em> ${retCrit.cold} cold & ${retCrit.hot} hot`+
+        (cCrit.stranded
+          ? ` → ${cCrit.stranded} may not pass`
+          : ` (all will pass)`)
+        +`</p>
       `;
     }
 
-    // Initialize
+    // Init
     showStep(1);
   </script>
 
