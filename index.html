@@ -33,7 +33,7 @@
     <div id="wh-details"></div>
   </div>
   
-  <!-- Step 2: Select State & Goal -->
+  <!-- Step 2: State & Goal -->
   <div id="step-2" class="step">
     <h2>Step 2: State &amp; Goal</h2>
     <label>
@@ -54,7 +54,7 @@
     </label>
   </div>
 
-  <!-- Step 3: Ship Mass -->
+  <!-- Step 3: Enter Ship Mass -->
   <div id="step-3" class="step">
     <h2>Step 3: Enter Ship Mass</h2>
     <label>
@@ -68,30 +68,11 @@
     </label>
   </div>
 
-  <!-- Step 4: Interactive Jump Control -->
+  <!-- Step 4: Jump Plan -->
   <div id="step-4" class="step">
-    <h2>Step 4: Controlled Jumping</h2>
-    <p>
-      <strong>Goal:</strong> <span id="goal-text"></span><br>
-      <strong>Starting Band:</strong> <span id="current-state-display"></span>
-    </p>
-    <p><em>After each jump, return to your home hole and observe its new state.</em></p>
-    <label>
-      New State:
-      <select id="dynamic-state">
-        <option value="stable">Stable (50–100%)</option>
-        <option value="unstable">Unstable (10–50%)</option>
-        <option value="critical">Critical (0–10%)</option>
-      </select>
-    </label>
-    <p>
-      <strong>Next action:</strong>
-      <span id="next-action"></span>
-    </p>
-    <button id="record-jump">Record Jump</button>
-
-    <h3>Log of actions</h3>
-    <ul id="plan-log"></ul>
+    <h2>Step 4: Jump Plan</h2>
+    <p><strong>Plan:</strong> <span id="plan-summary"></span></p>
+    <pre id="plan-steps"></pre>
   </div>
 
   <!-- Wizard Navigation -->
@@ -106,13 +87,12 @@
   <script type="module">
     import { wormholes } from './data/wormholes.js';
 
-    // State
+    // Wizard state
     let currentStep = 1;
     let currentWH = null;
-    let startMass = 0;
-    let goalMass = 0;
+    let startMass = 0, goalMass = 0;
 
-    // UI references
+    // UI refs
     const steps      = {1: '#step-1', 2: '#step-2', 3: '#step-3', 4: '#step-4'};
     const btnNext    = document.getElementById('btn-next');
     const btnBack    = document.getElementById('btn-back');
@@ -124,12 +104,8 @@
     const goalSel    = document.getElementById('goal-select');
     const coldInput  = document.getElementById('cold-mass');
     const hotInput   = document.getElementById('hot-mass');
-    const goalText   = document.getElementById('goal-text');
-    const stateDisp  = document.getElementById('current-state-display');
-    const dynState   = document.getElementById('dynamic-state');
-    const nextAct    = document.getElementById('next-action');
-    const recordBtn  = document.getElementById('record-jump');
-    const planLog    = document.getElementById('plan-log');
+    const planSummary= document.getElementById('plan-summary');
+    const planSteps  = document.getElementById('plan-steps');
 
     function showStep(n) {
       Object.values(steps).forEach(sel => document.querySelector(sel).classList.remove('active'));
@@ -138,47 +114,56 @@
       btnNext.textContent = n === 4 ? 'Finish' : 'Next';
     }
 
-    // Reset everything
+    // Reset wizard
     btnReset.onclick = () => {
       currentStep = 1; currentWH = null; startMass = goalMass = 0;
-      whSearch.value = ''; whDetails.innerHTML = ''; suggestions.innerHTML = '';
-      coldInput.value = hotInput.value = '';
-      goalText.textContent = ''; stateDisp.textContent = '';
-      planLog.innerHTML = ''; nextAct.textContent = '';
+      whSearch.value = ''; suggestions.innerHTML = ''; whDetails.innerHTML = '';
+      coldInput.value = ''; hotInput.value = '';
+      planSummary.textContent = ''; planSteps.textContent = '';
       showStep(1);
     };
 
+    // Back button
     btnBack.onclick = () => {
-      if (currentStep > 1) { currentStep--; showStep(currentStep); }
+      if (currentStep > 1) {
+        currentStep--;
+        showStep(currentStep);
+      }
     };
 
+    // Next button
     btnNext.onclick = () => {
-      // validations
+      // Step 1 validation
       if (currentStep === 1 && !currentWH) {
-        alert('Select a wormhole first.'); return;
+        alert('Please select a wormhole.');
+        return;
       }
+      // Step 2: compute startMass & goalMass
       if (currentStep === 2) {
-        const perc = { stable: 1, unstable: .5, critical: .1 }[statusSel.value];
-        startMass = Math.round(currentWH.totalMass * perc);
+        const percMap = { stable: 1, unstable: 0.5, critical: 0.1 };
+        startMass = Math.round(currentWH.totalMass * percMap[statusSel.value]);
         goalMass  = goalSel.value === 'close'
           ? 0
-          : Math.round(currentWH.totalMass * .1);
+          : Math.round(currentWH.totalMass * 0.1);
       }
-      if (currentStep === 3 && (!coldInput.value || !hotInput.value)) {
-        alert('Enter cold and hot mass.'); return;
-      }
+      // Step 3 validation
       if (currentStep === 3) {
-        initInteractivePlan();
+        if (!coldInput.value || !hotInput.value) {
+          alert('Enter both cold and hot mass.');
+          return;
+        }
+        buildPlan();
       }
+      // Advance or finish
       if (currentStep < 4) {
         currentStep++;
         showStep(currentStep);
       } else {
-        alert('Process complete. Hit Reset to start over.');
+        alert('Done! Reset to start over.');
       }
     };
 
-    // Step 1: search
+    // --- Step 1: search & select ---
     whSearch.oninput = () => {
       const q = whSearch.value.trim().toUpperCase();
       suggestions.innerHTML = '';
@@ -189,21 +174,20 @@
         .filter(w => w.type.startsWith(q))
         .slice(0,8)
         .forEach(w => {
-          const d = document.createElement('div');
-          d.className = 'suggestion';
-          d.textContent = w.type;
-          d.onclick = () => selectWH(w);
-          suggestions.appendChild(d);
+          const div = document.createElement('div');
+          div.className = 'suggestion';
+          div.textContent = w.type;
+          div.onclick = () => selectWH(w);
+          suggestions.appendChild(div);
         });
     };
 
-    // select wormhole
     function selectWH(w) {
-      currentWH = {...w};
+      currentWH = { ...w };
       whSearch.value = w.type;
       suggestions.innerHTML = '';
       let html = `<strong>${w.type}</strong><ul>
-        <li>From: ${w.from||'—'}</li>
+        <li>From: ${w.from||'–'}</li>
         <li>To: ${w.to}</li>
         <li>Total Mass: ${w.totalMass.toLocaleString()}</li>
         <li>Max Jump Mass: ${w.maxIndividualMass.toLocaleString()}</li>
@@ -212,41 +196,57 @@
       if (w.massRegeneration) {
         html += `<li>Regen: ${w.massRegeneration.toLocaleString()}/s</li>`;
       }
-      html += `</ul>`;
+      html += '</ul>';
       whDetails.innerHTML = html;
     }
 
-    // Step 4: interactive plan
-    function initInteractivePlan() {
-      goalText.textContent = goalSel.value === 'close'
-        ? 'Close hole completely'
-        : 'Push to Critical (10%)';
-      stateDisp.textContent = statusSel.options[statusSel.selectedIndex].text;
-      dynState.value = statusSel.value;
-      planLog.innerHTML = '';
-      updateNextAction();
+    // --- Step 4: compute one-shot plan ---
+    function buildPlan() {
+      const cold = parseInt(coldInput.value, 10);
+      const hot  = parseInt(hotInput.value, 10);
+      const diff = Math.max(0, startMass - goalMass);
+      const maxInd = currentWH.maxIndividualMass;
+
+      // Pick the pattern (out/back) that yields the largest per-ship mass while honoring maxIndividualMass
+      const patterns = [
+        {out: hot, back: hot},
+        {out: cold, back: hot},
+        {out: hot, back: cold},
+        {out: cold, back: cold}
+      ].filter(p => p.out <= maxInd && p.back <= maxInd);
+
+      if (patterns.length === 0) {
+        planSummary.textContent = 'Error: neither hot nor cold mass fits the hole’s max individual mass.';
+        planSteps.textContent = '';
+        return;
+      }
+
+      patterns.forEach(p => p.per = p.out + p.back);
+      patterns.sort((a, b) => b.per - a.per);  // descending by mass moved per round-trip
+      const best = patterns[0];
+      const ships = Math.ceil(diff / best.per);
+
+      // Summary
+      planSummary.textContent =
+        `Use ${ships} ship${ships > 1 ? 's' : ''}, each ` +
+        `jumping ${best.out.toLocaleString()} kg out and ${best.back.toLocaleString()} kg back.`;
+
+      // Detailed steps
+      const lines = [
+        `Total mass to move: ${diff.toLocaleString()} kg`,
+        `Mass moved per ship round-trip: ${best.per.toLocaleString()} kg`,
+        `→ You need ${ships} round-trip${ships>1?'s':''}`,
+        ``,
+        `Steps:`,
+        `1) Jump all ${ships} ship${ships>1?'s':''} out at ${best.out.toLocaleString()} kg.`,
+        `2) Return all ${ships} ship${ships>1?'s':''} at ${best.back.toLocaleString()} kg.`,
+        `3) Hole should now be at or past your goal threshold.`
+      ];
+      planSteps.textContent = lines.join('\n');
     }
 
-    function updateNextAction() {
-      const hot  = parseInt(hotInput.value,10);
-      const cold = parseInt(coldInput.value,10);
-      // always recommend hot for minimal trips
-      nextAct.textContent = `Jump ${hot.toLocaleString()} kg hot out`;
-      stateDisp.textContent = dynState.options[dynState.selectedIndex].text;
-    }
-
-    recordBtn.onclick = () => {
-      const st = dynState.value;
-      const action = nextAct.textContent;
-      const li = document.createElement('li');
-      li.textContent = `${action} → new state: ${st}`;
-      planLog.appendChild(li);
-      updateNextAction();
-    };
-
-    // init
+    // Initialize
     showStep(1);
-
   </script>
 
 </body>
