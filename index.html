@@ -1,1 +1,35 @@
-
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Wormhole Closing Calculator</title>
+  <style>
+    body { font-family: sans-serif; margin: 20px; }
+    table, th, td { border: 1px solid #ccc; border-collapse: collapse; padding: 4px; }
+    table { margin-bottom: 20px; }
+    input[type=number] { width: 100px; }
+  </style>
+</head>
+<body>
+  <h1>Wormhole Closing Calculator</h1>
+  <div>
+    <label>Wormhole Total Mass (kg):
+      <input id="whMass" type="number" value="3000000000">
+    </label>
+  </div>
+  <h2>Ship Types</h2>
+  <table id="shipTable">
+    <thead>
+      <tr><th>Name</th><th>Mass (kg)</th><th>Count</th><th></th></tr>
+    </thead>
+    <tbody>
+    </tbody>
+  </table>
+  <button id="addShip">Add Custom Ship</button>
+  <br><br>
+  <button id="compute">Compute Jumps</button>
+  <h2>Steps</h2>
+  <pre id="output"></pre>
+  <script src="script.js"></script>
+</body>
+</html>
