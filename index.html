@@ -116,6 +116,7 @@
     });
 
     let currentWH = null;
+    let currentMatches = [];
     let planSteps = [];
     let planIndex = 0;
     let goalMass = 0;
@@ -200,9 +201,13 @@
       planSteps = [];
     });
 
-    function clearSuggestions() {
+    function hideSuggestions() {
       suggestions.textContent = '';
       suggestions.classList.add('hidden');
+    }
+
+    function clearAll() {
+      hideSuggestions();
       tracker.classList.add('hidden');
       setupDiv.classList.add('hidden');
       currentWH = null;
@@ -247,12 +252,13 @@
       const query = input.value.trim().toUpperCase();
       details.textContent = '';
       if (!query) {
-        clearSuggestions();
+        clearAll();
         return;
       }
       const matches = wormholes.filter(w => w.type.startsWith(query));
+      currentMatches = matches;
       if (matches.length === 0) {
-        clearSuggestions();
+        clearAll();
         return;
       }
       suggestions.innerHTML = '';
@@ -262,18 +268,43 @@
         div.textContent = m.type;
         div.addEventListener('click', () => {
           input.value = m.type;
-          clearSuggestions();
+          hideSuggestions();
           showDetails(m);
         });
         suggestions.appendChild(div);
       });
-      suggestions.classList.remove('hidden');
+      if (matches.length === 1 && matches[0].type === query) {
+        showDetails(matches[0]);
+        hideSuggestions();
+      } else {
+        suggestions.classList.remove('hidden');
+      }
     });
 
     document.addEventListener('click', (e) => {
       if (e.target !== input && !suggestions.contains(e.target)) {
-        clearSuggestions();
+        hideSuggestions();
       }
+    });
+
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        if (currentMatches.length > 0) {
+          input.value = currentMatches[0].type;
+          showDetails(currentMatches[0]);
+          hideSuggestions();
+        }
+      }
+    });
+
+    input.addEventListener('blur', () => {
+      const query = input.value.trim().toUpperCase();
+      const match = wormholes.find(w => w.type === query);
+      if (match) {
+        showDetails(match);
+      }
+      hideSuggestions();
     });
   </script>
 </body>

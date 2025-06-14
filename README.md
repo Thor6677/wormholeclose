@@ -9,7 +9,7 @@ This repository contains a minimal web interface for experimenting with a hypoth
 
 ## Usage
 
-Open the page and start typing a wormhole code to select one from the built in list. After you choose the hole you can specify its current mass state (Stable, Unstable or Critical) and whether you want to close the hole completely or merely mass‑critical it. Clicking **Start** sets the initial remaining mass and shows the Mass Tracker.
+Open the page and start typing a wormhole code. You can pick a suggestion with the mouse or hit **Enter** once the desired code appears. After a wormhole is selected its current mass state (Stable, Unstable or Critical) and a goal (close or crit) become available. Clicking **Start** sets the initial remaining mass and shows the Mass Tracker.
 
 Use the Mass Tracker to subtract your ship jumps and see how much mass remains to reach the goal. The **Plan Jumps** button will provide a step‑by‑step sequence using the selected ship mass.
 
