@@ -16,12 +16,32 @@
   <h1>Wormhole Search</h1>
   <input type="text" id="search" placeholder="Type wormhole code..." autocomplete="off" />
   <div id="suggestions" class="hidden"></div>
-  <pre id="details"></pre>
+  <div id="details"></div>
+
+  <div id="setup" class="hidden">
+    <label>
+      Current Status:
+      <select id="status-select">
+        <option value="stable">Stable</option>
+        <option value="unstable">Unstable</option>
+        <option value="critical">Critical</option>
+      </select>
+    </label>
+    <label>
+      Goal:
+      <select id="goal-select">
+        <option value="close">Close</option>
+        <option value="crit">Crit</option>
+      </select>
+    </label>
+    <button id="start-tracking">Start</button>
+  </div>
 
   <div id="mass-tracker" class="hidden">
     <h2>Mass Tracker</h2>
     <div>Remaining Mass: <span id="remaining-mass"></span></div>
     <div>State: <span id="wh-state"></span></div>
+    <div>Mass to Goal: <span id="goal-mass"></span></div>
     <label>
       Ship Hull:
       <select id="ship-select"></select>
@@ -51,9 +71,14 @@
     const input = document.getElementById('search');
     const suggestions = document.getElementById('suggestions');
     const details = document.getElementById('details');
+    const setupDiv = document.getElementById('setup');
+    const statusSelect = document.getElementById('status-select');
+    const goalSelect = document.getElementById('goal-select');
+    const startBtn = document.getElementById('start-tracking');
     const tracker = document.getElementById('mass-tracker');
     const remainingSpan = document.getElementById('remaining-mass');
     const stateSpan = document.getElementById('wh-state');
+    const goalSpan = document.getElementById('goal-mass');
     const shipSelect = document.getElementById('ship-select');
     const coldInput = document.getElementById('cold-mass');
     const hotInput = document.getElementById('hot-mass');
@@ -93,6 +118,8 @@
     let currentWH = null;
     let planSteps = [];
     let planIndex = 0;
+    let goalMass = 0;
+    let startMass = 0;
 
     function updateStateDisplay() {
       if (!currentWH) return;
@@ -105,6 +132,7 @@
         state = 'Unstable';
       }
       stateSpan.textContent = state;
+      goalSpan.textContent = Math.max(0, currentWH.remainingMass - goalMass).toLocaleString();
     }
 
     function calculatePlan() {
@@ -118,11 +146,12 @@
       let remaining = currentWH.remainingMass;
       const steps = [];
       let out = true;
-      while (remaining > 0) {
+      while (remaining > goalMass) {
         remaining -= mass;
+        const final = remaining <= goalMass;
         steps.push({
-          label: (out ? 'Jump out' : 'Jump back') + (remaining <= 0 ? ' (final)' : ''),
-          remaining: Math.max(0, remaining)
+          label: (out ? 'Jump out' : 'Jump back') + (final ? ' (final)' : ''),
+          remaining: final ? goalMass : remaining
         });
         out = !out;
       }
@@ -132,7 +161,7 @@
     addJump.addEventListener('click', () => {
       if (!currentWH) return;
       const mass = parseInt(useHot.checked ? hotInput.value : coldInput.value, 10) || 0;
-      currentWH.remainingMass = Math.max(0, currentWH.remainingMass - mass);
+      currentWH.remainingMass = Math.max(goalMass, currentWH.remainingMass - mass);
       updateStateDisplay();
     });
 
@@ -165,7 +194,7 @@
 
     resetMass.addEventListener('click', () => {
       if (!currentWH) return;
-      currentWH.remainingMass = currentWH.totalMass;
+      currentWH.remainingMass = startMass;
       updateStateDisplay();
       jumpPlanDiv.classList.add('hidden');
       planSteps = [];
@@ -175,23 +204,44 @@
       suggestions.textContent = '';
       suggestions.classList.add('hidden');
       tracker.classList.add('hidden');
+      setupDiv.classList.add('hidden');
       currentWH = null;
       jumpPlanDiv.classList.add('hidden');
       planSteps = [];
     }
 
     function showDetails(wh) {
-      details.textContent = JSON.stringify(wh, null, 2);
-      tracker.classList.remove('hidden');
-      currentWH = { ...wh, remainingMass: wh.totalMass };
+      details.innerHTML = `<strong>${wh.type}</strong> (${wh.from || '?' } &rarr; ${wh.to || '?'})<ul>` +
+        `<li>Total Mass: ${wh.totalMass.toLocaleString()}</li>` +
+        `<li>Max Individual Mass: ${wh.maxIndividualMass.toLocaleString()}</li>` +
+        `</ul>`;
+      setupDiv.classList.remove('hidden');
+      tracker.classList.add('hidden');
+      currentWH = { ...wh };
       shipSelect.value = defaultShips[0].name;
       coldInput.value = defaultShips[0].cold;
       hotInput.value = defaultShips[0].hot;
       useHot.checked = false;
       jumpPlanDiv.classList.add('hidden');
       planSteps = [];
-      updateStateDisplay();
     }
+
+    startBtn.addEventListener('click', () => {
+      if (!currentWH) return;
+      const perc = {
+        stable: 0.75,
+        unstable: 0.3,
+        critical: 0.05
+      }[statusSelect.value] || 0.75;
+      const total = currentWH.totalMass;
+      currentWH.remainingMass = Math.round(total * perc);
+      startMass = currentWH.remainingMass;
+      goalMass = goalSelect.value === 'close' ? 0 : Math.round(total * 0.1);
+      tracker.classList.remove('hidden');
+      jumpPlanDiv.classList.add('hidden');
+      planSteps = [];
+      updateStateDisplay();
+    });
 
     input.addEventListener('input', () => {
       const query = input.value.trim().toUpperCase();
