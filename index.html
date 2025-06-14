@@ -115,8 +115,11 @@
 
     let currentWH = null;
     let currentMatches = [];
+    let planSteps = [];
+    let planIndex = 0;
     let goalMass = 0;
     let startMass = 0;
+
 
     function updateStateDisplay() {
       if (!currentWH) return;
@@ -139,7 +142,20 @@
       if (hot <= 0 || cold <= 0) return '';
       if (hot > currentWH.maxIndividualMass || cold > currentWH.maxIndividualMass) {
         alert('Selected ship exceeds max individual mass for this wormhole!');
-        return '';
+      codex/create-wormhole-closure-guide-webpage
+        return [];
+      }
+      let remaining = currentWH.remainingMass;
+      const steps = [];
+      let out = true;
+      while (remaining > goalMass) {
+        remaining -= mass;
+        const final = remaining <= goalMass;
+        steps.push({
+          label: (out ? 'Jump out' : 'Jump back') + (final ? ' (final)' : ''),
+          remaining: final ? goalMass : remaining
+        });
+        out = !out;
       }
       const diff = currentWH.remainingMass - goalMass;
       if (diff <= 0) return '';
@@ -198,6 +214,7 @@
       hotInput.value = defaultShips[0].hot;
       useHot.checked = false;
       jumpPlanDiv.classList.add('hidden');
+      planSteps = [];
     }
 
     startBtn.addEventListener('click', () => {
@@ -213,6 +230,7 @@
       goalMass = goalSelect.value === 'close' ? 0 : Math.round(total * 0.1);
       tracker.classList.remove('hidden');
       jumpPlanDiv.classList.add('hidden');
+      planSteps = [];
       updateStateDisplay();
     });
 
