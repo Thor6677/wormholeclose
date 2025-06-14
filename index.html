@@ -1,1 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Wormhole Search</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 20px; }
+    #suggestions { border: 1px solid #ccc; max-height: 150px; overflow-y: auto; margin-top: 5px; }
+    .suggestion { padding: 4px; cursor: pointer; }
+    .suggestion:hover { background-color: #eee; }
+    .hidden { display: none; }
+    pre { background: #f9f9f9; padding: 10px; }
+  </style>
+</head>
+<body>
+  <h1>Wormhole Search</h1>
+  <input type="text" id="search" placeholder="Type wormhole code..." autocomplete="off" />
+  <div id="suggestions" class="hidden"></div>
+  <pre id="details"></pre>
 
+  <script type="module">
+    import { wormholes } from './data/wormholes.js';
+
+    const input = document.getElementById('search');
+    const suggestions = document.getElementById('suggestions');
+    const details = document.getElementById('details');
+
+    function clearSuggestions() {
+      suggestions.textContent = '';
+      suggestions.classList.add('hidden');
+    }
+
+    function showDetails(wh) {
+      details.textContent = JSON.stringify(wh, null, 2);
+    }
+
+    input.addEventListener('input', () => {
+      const query = input.value.trim().toUpperCase();
+      details.textContent = '';
+      if (!query) {
+        clearSuggestions();
+        return;
+      }
+      const matches = wormholes.filter(w => w.type.startsWith(query));
+      if (matches.length === 0) {
+        clearSuggestions();
+        return;
+      }
+      suggestions.innerHTML = '';
+      matches.forEach(m => {
+        const div = document.createElement('div');
+        div.className = 'suggestion';
+        div.textContent = m.type;
+        div.addEventListener('click', () => {
+          input.value = m.type;
+          clearSuggestions();
+          showDetails(m);
+        });
+        suggestions.appendChild(div);
+      });
+      suggestions.classList.remove('hidden');
+    });
+
+    document.addEventListener('click', (e) => {
+      if (e.target !== input && !suggestions.contains(e.target)) {
+        clearSuggestions();
+      }
+    });
+  </script>
+</body>
+</html>
