@@ -37,6 +37,12 @@
     </label>
     <button id="add-jump">Add Jump</button>
     <button id="reset-mass">Reset</button>
+    <button id="plan-jumps">Plan Jumps</button>
+    <div id="jump-plan" class="hidden">
+      <h3>Jump Plan</h3>
+      <div id="jump-step"></div>
+      <button id="next-step">Next Step</button>
+    </div>
   </div>
 
   <script type="module">
@@ -54,6 +60,10 @@
     const useHot = document.getElementById('use-hot');
     const addJump = document.getElementById('add-jump');
     const resetMass = document.getElementById('reset-mass');
+    const planJumps = document.getElementById('plan-jumps');
+    const jumpPlanDiv = document.getElementById('jump-plan');
+    const jumpStepDiv = document.getElementById('jump-step');
+    const nextStepBtn = document.getElementById('next-step');
 
     const defaultShips = [
       { name: 'Capsule', cold: 10000, hot: 10000 },
@@ -81,6 +91,8 @@
     });
 
     let currentWH = null;
+    let planSteps = [];
+    let planIndex = 0;
 
     function updateStateDisplay() {
       if (!currentWH) return;
@@ -95,6 +107,28 @@
       stateSpan.textContent = state;
     }
 
+    function calculatePlan() {
+      if (!currentWH) return [];
+      const mass = parseInt(useHot.checked ? hotInput.value : coldInput.value, 10) || 0;
+      if (mass <= 0) return [];
+      if (mass > currentWH.maxIndividualMass) {
+        alert('Selected ship exceeds max individual mass for this wormhole!');
+        return [];
+      }
+      let remaining = currentWH.remainingMass;
+      const steps = [];
+      let out = true;
+      while (remaining > 0) {
+        remaining -= mass;
+        steps.push({
+          label: (out ? 'Jump out' : 'Jump back') + (remaining <= 0 ? ' (final)' : ''),
+          remaining: Math.max(0, remaining)
+        });
+        out = !out;
+      }
+      return steps;
+    }
+
     addJump.addEventListener('click', () => {
       if (!currentWH) return;
       const mass = parseInt(useHot.checked ? hotInput.value : coldInput.value, 10) || 0;
@@ -102,10 +136,39 @@
       updateStateDisplay();
     });
 
+    planJumps.addEventListener('click', () => {
+      planSteps = calculatePlan();
+      planIndex = 0;
+      if (planSteps.length === 0) {
+        jumpPlanDiv.classList.add('hidden');
+        return;
+      }
+      nextStepBtn.disabled = false;
+      jumpPlanDiv.classList.remove('hidden');
+      jumpStepDiv.textContent = `${planSteps[0].label} - Remaining mass: ${planSteps[0].remaining.toLocaleString()}`;
+    });
+
+    nextStepBtn.addEventListener('click', () => {
+      if (planIndex >= planSteps.length) return;
+      const step = planSteps[planIndex];
+      currentWH.remainingMass = step.remaining;
+      updateStateDisplay();
+      planIndex++;
+      if (planIndex < planSteps.length) {
+        const next = planSteps[planIndex];
+        jumpStepDiv.textContent = `${next.label} - Remaining mass: ${next.remaining.toLocaleString()}`;
+      } else {
+        jumpStepDiv.textContent = 'Plan complete';
+        nextStepBtn.disabled = true;
+      }
+    });
+
     resetMass.addEventListener('click', () => {
       if (!currentWH) return;
       currentWH.remainingMass = currentWH.totalMass;
       updateStateDisplay();
+      jumpPlanDiv.classList.add('hidden');
+      planSteps = [];
     });
 
     function clearSuggestions() {
@@ -113,6 +176,8 @@
       suggestions.classList.add('hidden');
       tracker.classList.add('hidden');
       currentWH = null;
+      jumpPlanDiv.classList.add('hidden');
+      planSteps = [];
     }
 
     function showDetails(wh) {
@@ -123,6 +188,8 @@
       coldInput.value = defaultShips[0].cold;
       hotInput.value = defaultShips[0].hot;
       useHot.checked = false;
+      jumpPlanDiv.classList.add('hidden');
+      planSteps = [];
       updateStateDisplay();
     }
 
