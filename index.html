@@ -57,11 +57,10 @@
     </label>
     <button id="add-jump">Add Jump</button>
     <button id="reset-mass">Reset</button>
-    <button id="plan-jumps">Plan Jumps</button>
+    <button id="plan-jumps">Calculate Plan</button>
     <div id="jump-plan" class="hidden">
       <h3>Jump Plan</h3>
       <div id="jump-step"></div>
-      <button id="next-step">Next Step</button>
     </div>
   </div>
 
@@ -88,7 +87,6 @@
     const planJumps = document.getElementById('plan-jumps');
     const jumpPlanDiv = document.getElementById('jump-plan');
     const jumpStepDiv = document.getElementById('jump-step');
-    const nextStepBtn = document.getElementById('next-step');
 
     const defaultShips = [
       { name: 'Capsule', cold: 10000, hot: 10000 },
@@ -122,6 +120,7 @@
     let goalMass = 0;
     let startMass = 0;
 
+
     function updateStateDisplay() {
       if (!currentWH) return;
       remainingSpan.textContent = currentWH.remainingMass.toLocaleString();
@@ -137,11 +136,13 @@
     }
 
     function calculatePlan() {
-      if (!currentWH) return [];
-      const mass = parseInt(useHot.checked ? hotInput.value : coldInput.value, 10) || 0;
-      if (mass <= 0) return [];
-      if (mass > currentWH.maxIndividualMass) {
+      if (!currentWH) return '';
+      const hot = parseInt(hotInput.value, 10) || 0;
+      const cold = parseInt(coldInput.value, 10) || 0;
+      if (hot <= 0 || cold <= 0) return '';
+      if (hot > currentWH.maxIndividualMass || cold > currentWH.maxIndividualMass) {
         alert('Selected ship exceeds max individual mass for this wormhole!');
+      codex/create-wormhole-closure-guide-webpage
         return [];
       }
       let remaining = currentWH.remainingMass;
@@ -156,7 +157,11 @@
         });
         out = !out;
       }
-      return steps;
+      const diff = currentWH.remainingMass - goalMass;
+      if (diff <= 0) return '';
+      const perShip = hot * 2; // out and back hot
+      const count = Math.ceil(diff / perShip);
+      return `Jump ${count} ${shipSelect.value}(s) out hot and then back hot to reach the goal.`;
     }
 
     addJump.addEventListener('click', () => {
@@ -167,30 +172,13 @@
     });
 
     planJumps.addEventListener('click', () => {
-      planSteps = calculatePlan();
-      planIndex = 0;
-      if (planSteps.length === 0) {
+      const text = calculatePlan();
+      if (!text) {
         jumpPlanDiv.classList.add('hidden');
         return;
       }
-      nextStepBtn.disabled = false;
       jumpPlanDiv.classList.remove('hidden');
-      jumpStepDiv.textContent = `${planSteps[0].label} - Remaining mass: ${planSteps[0].remaining.toLocaleString()}`;
-    });
-
-    nextStepBtn.addEventListener('click', () => {
-      if (planIndex >= planSteps.length) return;
-      const step = planSteps[planIndex];
-      currentWH.remainingMass = step.remaining;
-      updateStateDisplay();
-      planIndex++;
-      if (planIndex < planSteps.length) {
-        const next = planSteps[planIndex];
-        jumpStepDiv.textContent = `${next.label} - Remaining mass: ${next.remaining.toLocaleString()}`;
-      } else {
-        jumpStepDiv.textContent = 'Plan complete';
-        nextStepBtn.disabled = true;
-      }
+      jumpStepDiv.textContent = text;
     });
 
     resetMass.addEventListener('click', () => {
@@ -198,7 +186,6 @@
       currentWH.remainingMass = startMass;
       updateStateDisplay();
       jumpPlanDiv.classList.add('hidden');
-      planSteps = [];
     });
 
     function hideSuggestions() {
@@ -212,7 +199,6 @@
       setupDiv.classList.add('hidden');
       currentWH = null;
       jumpPlanDiv.classList.add('hidden');
-      planSteps = [];
     }
 
     function showDetails(wh) {
@@ -274,6 +260,7 @@
         suggestions.appendChild(div);
       });
       if (matches.length === 1 && matches[0].type === query) {
+        input.value = matches[0].type;
         showDetails(matches[0]);
         hideSuggestions();
       } else {
@@ -302,6 +289,7 @@
       const query = input.value.trim().toUpperCase();
       const match = wormholes.find(w => w.type === query);
       if (match) {
+        input.value = match.type;
         showDetails(match);
       }
       hideSuggestions();
