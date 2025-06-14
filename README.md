@@ -9,5 +9,7 @@ This repository contains a minimal web interface for experimenting with a hypoth
 
 ## Usage
 
-When you open the page you can search for a wormhole type and view its basic information. After selecting a wormhole, the Mass Tracker panel lets you keep track of the remaining mass. Choose a ship hull from the built-in list or enter custom cold/hot mass values, then record each jump to see how the wormhole state changes from **Stable** to **Unstable** and finally **Critical** as mass is depleted.
+Open the page and start typing a wormhole code to select one from the built in list. After you choose the hole you can specify its current mass state (Stable, Unstable or Critical) and whether you want to close the hole completely or merely mass‑critical it. Clicking **Start** sets the initial remaining mass and shows the Mass Tracker.
+
+Use the Mass Tracker to subtract your ship jumps and see how much mass remains to reach the goal. The **Plan Jumps** button will provide a step‑by‑step sequence using the selected ship mass.
 
