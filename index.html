@@ -6,6 +6,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <style>
     body { font-family: Arial, sans-serif; margin: 1rem; max-width: 600px; }
+    h1, h2 { text-align: center; }
     .step { display: none; }
     .step.active { display: block; }
     .wizard-nav { margin-top: 1.5rem; display: flex; justify-content: space-between; }
@@ -15,9 +16,8 @@
     .suggestion:hover { background: #eee; }
     pre { background: #f9f9f9; padding: 1rem; white-space: pre-wrap; }
     @media (max-width: 480px) {
-      button { flex: 1; margin: 0 .25rem; }
+      button { flex: 1; margin: .25rem 0; }
       .wizard-nav { flex-direction: column-reverse; }
-      .wizard-nav button + button { margin-bottom: .5rem; }
     }
   </style>
 </head>
@@ -44,10 +44,11 @@
         <option value="critical">Critical (10→0%)</option>
       </select>
     </label>
+    <br><br>
     <label>
       Goal:
       <select id="goal-select">
-        <option value="close">Close (0)</option>
+        <option value="close">Close (0%)</option>
         <option value="crit">Crit (10%)</option>
       </select>
     </label>
@@ -55,22 +56,42 @@
 
   <!-- Step 3: Ship Mass -->
   <div id="step-3" class="step">
-    <h2>Step 3: Ship Mass</h2>
+    <h2>Step 3: Enter Ship Mass</h2>
     <label>
       Cold Mass (kg):
-      <input type="number" id="cold-mass" placeholder="e.g. 1 650 000"/>
+      <input type="number" id="cold-mass" placeholder="e.g. 1650000"/>
     </label>
+    <br><br>
     <label>
       Hot Mass (kg):
-      <input type="number" id="hot-mass" placeholder="e.g. 2 475 000"/>
+      <input type="number" id="hot-mass" placeholder="e.g. 2475000"/>
     </label>
   </div>
 
-  <!-- Step 4: Jump Plan -->
+  <!-- Step 4: Interactive Jump Control -->
   <div id="step-4" class="step">
-    <h2>Step 4: Jump Plan</h2>
-    <div id="plan-summary"></div>
-    <pre id="plan-steps"></pre>
+    <h2>Step 4: Controlled Jumping</h2>
+    <p>
+      <strong>Goal:</strong> <span id="goal-text"></span><br>
+      <strong>Starting Band:</strong> <span id="current-state-display"></span>
+    </p>
+    <p><em>After each jump, return to your home hole and observe its new state.</em></p>
+    <label>
+      New State:
+      <select id="dynamic-state">
+        <option value="stable">Stable (50–100%)</option>
+        <option value="unstable">Unstable (10–50%)</option>
+        <option value="critical">Critical (0–10%)</option>
+      </select>
+    </label>
+    <p>
+      <strong>Next action:</strong>
+      <span id="next-action"></span>
+    </p>
+    <button id="record-jump">Record Jump</button>
+
+    <h3>Log of actions</h3>
+    <ul id="plan-log"></ul>
   </div>
 
   <!-- Wizard Navigation -->
@@ -85,164 +106,148 @@
   <script type="module">
     import { wormholes } from './data/wormholes.js';
 
-    // Wizard state
+    // State
     let currentStep = 1;
     let currentWH = null;
     let startMass = 0;
     let goalMass = 0;
 
-    // UI refs
-    const steps = {
-      1: document.getElementById('step-1'),
-      2: document.getElementById('step-2'),
-      3: document.getElementById('step-3'),
-      4: document.getElementById('step-4'),
-    };
-    const btnNext  = document.getElementById('btn-next');
-    const btnBack  = document.getElementById('btn-back');
-    const btnReset = document.getElementById('btn-reset');
+    // UI references
+    const steps      = {1: '#step-1', 2: '#step-2', 3: '#step-3', 4: '#step-4'};
+    const btnNext    = document.getElementById('btn-next');
+    const btnBack    = document.getElementById('btn-back');
+    const btnReset   = document.getElementById('btn-reset');
+    const whSearch   = document.getElementById('wh-search');
+    const suggestions= document.getElementById('suggestions');
+    const whDetails  = document.getElementById('wh-details');
+    const statusSel  = document.getElementById('status-select');
+    const goalSel    = document.getElementById('goal-select');
+    const coldInput  = document.getElementById('cold-mass');
+    const hotInput   = document.getElementById('hot-mass');
+    const goalText   = document.getElementById('goal-text');
+    const stateDisp  = document.getElementById('current-state-display');
+    const dynState   = document.getElementById('dynamic-state');
+    const nextAct    = document.getElementById('next-action');
+    const recordBtn  = document.getElementById('record-jump');
+    const planLog    = document.getElementById('plan-log');
 
-    // Step 1 elements
-    const whSearch      = document.getElementById('wh-search');
-    const suggestions   = document.getElementById('suggestions');
-    const whDetailsDiv  = document.getElementById('wh-details');
-
-    // Step 2 elements
-    const statusSelect  = document.getElementById('status-select');
-    const goalSelect    = document.getElementById('goal-select');
-
-    // Step 3 elements
-    const coldInput     = document.getElementById('cold-mass');
-    const hotInput      = document.getElementById('hot-mass');
-
-    // Step 4 elements
-    const planSummary   = document.getElementById('plan-summary');
-    const planSteps     = document.getElementById('plan-steps');
-
-    // Utility: show only the active step
     function showStep(n) {
-      Object.values(steps).forEach(div => div.classList.remove('active'));
-      steps[n].classList.add('active');
+      Object.values(steps).forEach(sel => document.querySelector(sel).classList.remove('active'));
+      document.querySelector(steps[n]).classList.add('active');
       btnBack.disabled = (n === 1);
       btnNext.textContent = n === 4 ? 'Finish' : 'Next';
     }
 
-    // Reset wizard
-    btnReset.addEventListener('click', () => {
-      currentStep = 1;
-      currentWH = null;
-      startMass = goalMass = 0;
-      whSearch.value = '';
-      whDetailsDiv.innerHTML = '';
-      suggestions.innerHTML = '';
+    // Reset everything
+    btnReset.onclick = () => {
+      currentStep = 1; currentWH = null; startMass = goalMass = 0;
+      whSearch.value = ''; whDetails.innerHTML = ''; suggestions.innerHTML = '';
       coldInput.value = hotInput.value = '';
-      planSummary.textContent = '';
-      planSteps.textContent = '';
+      goalText.textContent = ''; stateDisp.textContent = '';
+      planLog.innerHTML = ''; nextAct.textContent = '';
       showStep(1);
-    });
+    };
 
-    // Back/Next handlers
-    btnBack.addEventListener('click', () => {
-      if (currentStep > 1) {
-        currentStep--;
-        showStep(currentStep);
+    btnBack.onclick = () => {
+      if (currentStep > 1) { currentStep--; showStep(currentStep); }
+    };
+
+    btnNext.onclick = () => {
+      // validations
+      if (currentStep === 1 && !currentWH) {
+        alert('Select a wormhole first.'); return;
       }
-    });
-    btnNext.addEventListener('click', () => {
+      if (currentStep === 2) {
+        const perc = { stable: 1, unstable: .5, critical: .1 }[statusSel.value];
+        startMass = Math.round(currentWH.totalMass * perc);
+        goalMass  = goalSel.value === 'close'
+          ? 0
+          : Math.round(currentWH.totalMass * .1);
+      }
+      if (currentStep === 3 && (!coldInput.value || !hotInput.value)) {
+        alert('Enter cold and hot mass.'); return;
+      }
+      if (currentStep === 3) {
+        initInteractivePlan();
+      }
       if (currentStep < 4) {
-        // Validate before advancing
-        if (currentStep === 1 && !currentWH) {
-          alert('Please select a wormhole from the list.');
-          return;
-        }
-        if (currentStep === 3 && (!coldInput.value || !hotInput.value)) {
-          alert('Enter both cold and hot mass values.');
-          return;
-        }
-        if (currentStep === 2) {
-          // Compute startMass & goalMass
-          const percMap = { stable: 1, unstable: .5, critical: .1 };
-          startMass = Math.round(currentWH.totalMass * percMap[statusSelect.value]);
-          goalMass  = goalSelect.value === 'close'
-            ? 0
-            : Math.round(currentWH.totalMass * .1);
-        }
-        if (currentStep === 3) {
-          buildPlan();
-        }
         currentStep++;
         showStep(currentStep);
       } else {
-        // Finish
-        alert('Wizard complete! You can Reset to start over.');
+        alert('Process complete. Hit Reset to start over.');
       }
-    });
+    };
 
-    // --- Step 1: search & suggestions ---
-    whSearch.addEventListener('input', () => {
+    // Step 1: search
+    whSearch.oninput = () => {
       const q = whSearch.value.trim().toUpperCase();
       suggestions.innerHTML = '';
-      whDetailsDiv.innerHTML = '';
+      whDetails.innerHTML = '';
       currentWH = null;
       if (!q) return;
-      const matches = wormholes.filter(w => w.type.startsWith(q));
-      matches.slice(0, 8).forEach(w => {
-        const d = document.createElement('div');
-        d.className = 'suggestion';
-        d.textContent = w.type;
-        d.onclick = () => selectWH(w);
-        suggestions.appendChild(d);
-      });
-    });
+      wormholes
+        .filter(w => w.type.startsWith(q))
+        .slice(0,8)
+        .forEach(w => {
+          const d = document.createElement('div');
+          d.className = 'suggestion';
+          d.textContent = w.type;
+          d.onclick = () => selectWH(w);
+          suggestions.appendChild(d);
+        });
+    };
 
+    // select wormhole
     function selectWH(w) {
-      currentWH = { ...w };
+      currentWH = {...w};
       whSearch.value = w.type;
       suggestions.innerHTML = '';
-      // Show details
       let html = `<strong>${w.type}</strong><ul>
-        <li>From: ${w.from || '—'}</li>
+        <li>From: ${w.from||'—'}</li>
         <li>To: ${w.to}</li>
         <li>Total Mass: ${w.totalMass.toLocaleString()}</li>
-        <li>Max per Jump: ${w.maxIndividualMass.toLocaleString()}</li>
+        <li>Max Jump Mass: ${w.maxIndividualMass.toLocaleString()}</li>
         <li>Class: ${w.classification}</li>
         <li>Max Stable Time: ${w.maxStableTime} h</li>`;
       if (w.massRegeneration) {
         html += `<li>Regen: ${w.massRegeneration.toLocaleString()}/s</li>`;
       }
       html += `</ul>`;
-      whDetailsDiv.innerHTML = html;
+      whDetails.innerHTML = html;
     }
 
-    // --- Step 4: plan builder ---
-    function buildPlan() {
-      const cold = parseInt(coldInput.value, 10);
-      const hot  = parseInt(hotInput.value, 10);
-      const diff = Math.max(0, startMass - goalMass);
-      const perTrip = hot * 2;
-      const fullTrips = Math.floor(diff / perTrip);
-      const remainder = diff - fullTrips * perTrip;
-
-      // Summary
-      const trips = remainder > 0 ? fullTrips + 1 : fullTrips;
-      planSummary.textContent =
-        `You need ≈${trips} round-trip${trips>1?'s':''} ` +
-        `(hot=${hot.toLocaleString()} kg each way) to move ${diff.toLocaleString()} kg.`;
-
-      // Step-by-step
-      const lines = [];
-      for (let i = 0; i < fullTrips; i++) {
-        lines.push(`Trip ${i+1}: Jump out (${hot.toLocaleString()} kg hot)`);
-        lines.push(`         Return (${hot.toLocaleString()} kg hot)`);
-      }
-      if (remainder > 0) {
-        lines.push(`Final: Jump out (${remainder.toLocaleString()} kg hot, final)`);
-      }
-      planSteps.textContent = lines.join('\n');
+    // Step 4: interactive plan
+    function initInteractivePlan() {
+      goalText.textContent = goalSel.value === 'close'
+        ? 'Close hole completely'
+        : 'Push to Critical (10%)';
+      stateDisp.textContent = statusSel.options[statusSel.selectedIndex].text;
+      dynState.value = statusSel.value;
+      planLog.innerHTML = '';
+      updateNextAction();
     }
 
-    // Initialize
+    function updateNextAction() {
+      const hot  = parseInt(hotInput.value,10);
+      const cold = parseInt(coldInput.value,10);
+      // always recommend hot for minimal trips
+      nextAct.textContent = `Jump ${hot.toLocaleString()} kg hot out`;
+      stateDisp.textContent = dynState.options[dynState.selectedIndex].text;
+    }
+
+    recordBtn.onclick = () => {
+      const st = dynState.value;
+      const action = nextAct.textContent;
+      const li = document.createElement('li');
+      li.textContent = `${action} → new state: ${st}`;
+      planLog.appendChild(li);
+      updateNextAction();
+    };
+
+    // init
     showStep(1);
+
   </script>
+
 </body>
 </html>
