@@ -68,11 +68,18 @@
     </label>
   </div>
 
-  <!-- Step 4: Jump Plan -->
+  <!-- Step 4: Initial Jump Plan -->
   <div id="step-4" class="step">
-    <h2>Step 4: Jump Plan</h2>
-    <p><strong>Plan:</strong> <span id="plan-summary"></span></p>
-    <pre id="plan-steps"></pre>
+    <h2>Step 4: Initial Jump</h2>
+    <p id="initial-summary"></p>
+    <pre id="initial-steps"></pre>
+  </div>
+
+  <!-- Step 5: Return Jump Instructions -->
+  <div id="step-5" class="step">
+    <h2>Step 5: Return Jump</h2>
+    <p>After your initial jump, observe the hole’s state (Stable or Unstable), then choose the appropriate return instructions below:</p>
+    <div id="return-instructions"></div>
   </div>
 
   <!-- Wizard Navigation -->
@@ -91,39 +98,43 @@
     let currentStep = 1;
     let currentWH = null;
     let startMass = 0, goalMass = 0;
+    let shipCount = 0, initCold = 0, initHot = 0, remAfterInit = 0;
 
-    // UI refs
-    const steps      = {1: '#step-1', 2: '#step-2', 3: '#step-3', 4: '#step-4'};
-    const btnNext    = document.getElementById('btn-next');
-    const btnBack    = document.getElementById('btn-back');
-    const btnReset   = document.getElementById('btn-reset');
-    const whSearch   = document.getElementById('wh-search');
-    const suggestions= document.getElementById('suggestions');
-    const whDetails  = document.getElementById('wh-details');
-    const statusSel  = document.getElementById('status-select');
-    const goalSel    = document.getElementById('goal-select');
-    const coldInput  = document.getElementById('cold-mass');
-    const hotInput   = document.getElementById('hot-mass');
-    const planSummary= document.getElementById('plan-summary');
-    const planSteps  = document.getElementById('plan-steps');
+    // UI references
+    const steps       = {1: '#step-1', 2: '#step-2', 3: '#step-3', 4: '#step-4', 5: '#step-5'};
+    const btnNext     = document.getElementById('btn-next');
+    const btnBack     = document.getElementById('btn-back');
+    const btnReset    = document.getElementById('btn-reset');
+    const whSearch    = document.getElementById('wh-search');
+    const suggestions = document.getElementById('suggestions');
+    const whDetails   = document.getElementById('wh-details');
+    const statusSel   = document.getElementById('status-select');
+    const goalSel     = document.getElementById('goal-select');
+    const coldInput   = document.getElementById('cold-mass');
+    const hotInput    = document.getElementById('hot-mass');
+    const initSummary = document.getElementById('initial-summary');
+    const initSteps   = document.getElementById('initial-steps');
+    const returnDiv   = document.getElementById('return-instructions');
 
     function showStep(n) {
       Object.values(steps).forEach(sel => document.querySelector(sel).classList.remove('active'));
       document.querySelector(steps[n]).classList.add('active');
       btnBack.disabled = (n === 1);
-      btnNext.textContent = n === 4 ? 'Finish' : 'Next';
+      btnNext.textContent = n === 5 ? 'Finish' : 'Next';
     }
 
     // Reset wizard
     btnReset.onclick = () => {
-      currentStep = 1; currentWH = null; startMass = goalMass = 0;
+      currentStep = 1; currentWH = null;
+      startMass = goalMass = 0;
+      shipCount = initCold = initHot = remAfterInit = 0;
       whSearch.value = ''; suggestions.innerHTML = ''; whDetails.innerHTML = '';
       coldInput.value = ''; hotInput.value = '';
-      planSummary.textContent = ''; planSteps.textContent = '';
+      initSummary.textContent = ''; initSteps.textContent = '';
+      returnDiv.innerHTML = '';
       showStep(1);
     };
 
-    // Back button
     btnBack.onclick = () => {
       if (currentStep > 1) {
         currentStep--;
@@ -131,14 +142,12 @@
       }
     };
 
-    // Next button
     btnNext.onclick = () => {
       // Step 1 validation
       if (currentStep === 1 && !currentWH) {
-        alert('Please select a wormhole.');
-        return;
+        alert('Please select a wormhole.'); return;
       }
-      // Step 2: compute startMass & goalMass
+      // Step 2 compute masses
       if (currentStep === 2) {
         const percMap = { stable: 1, unstable: 0.5, critical: 0.1 };
         startMass = Math.round(currentWH.totalMass * percMap[statusSel.value]);
@@ -146,20 +155,23 @@
           ? 0
           : Math.round(currentWH.totalMass * 0.1);
       }
-      // Step 3 validation
+      // Step 3 validation & initial plan
       if (currentStep === 3) {
         if (!coldInput.value || !hotInput.value) {
-          alert('Enter both cold and hot mass.');
-          return;
+          alert('Enter both cold and hot mass.'); return;
         }
-        buildPlan();
+        buildInitialPlan();
+      }
+      // Step 4 -> Step 5 return plan
+      if (currentStep === 4) {
+        buildReturnInstructions();
       }
       // Advance or finish
-      if (currentStep < 4) {
+      if (currentStep < 5) {
         currentStep++;
         showStep(currentStep);
       } else {
-        alert('Done! Reset to start over.');
+        alert('All set! Follow the steps in-game.');
       }
     };
 
@@ -174,11 +186,11 @@
         .filter(w => w.type.startsWith(q))
         .slice(0,8)
         .forEach(w => {
-          const div = document.createElement('div');
-          div.className = 'suggestion';
-          div.textContent = w.type;
-          div.onclick = () => selectWH(w);
-          suggestions.appendChild(div);
+          const d = document.createElement('div');
+          d.className = 'suggestion';
+          d.textContent = w.type;
+          d.onclick = () => selectWH(w);
+          suggestions.appendChild(d);
         });
     };
 
@@ -187,7 +199,7 @@
       whSearch.value = w.type;
       suggestions.innerHTML = '';
       let html = `<strong>${w.type}</strong><ul>
-        <li>From: ${w.from||'–'}</li>
+        <li>From: ${w.from||'—'}</li>
         <li>To: ${w.to}</li>
         <li>Total Mass: ${w.totalMass.toLocaleString()}</li>
         <li>Max Jump Mass: ${w.maxIndividualMass.toLocaleString()}</li>
@@ -196,53 +208,69 @@
       if (w.massRegeneration) {
         html += `<li>Regen: ${w.massRegeneration.toLocaleString()}/s</li>`;
       }
-      html += '</ul>';
+      html += `</ul>`;
       whDetails.innerHTML = html;
     }
 
-    // --- Step 4: compute one-shot plan ---
-    function buildPlan() {
-      const cold = parseInt(coldInput.value, 10);
-      const hot  = parseInt(hotInput.value, 10);
+    // --- Step 4: initial jump plan (one action) ---
+    function buildInitialPlan() {
+      const cold = parseInt(coldInput.value,10);
+      const hot  = parseInt(hotInput.value,10);
       const diff = Math.max(0, startMass - goalMass);
       const maxInd = currentWH.maxIndividualMass;
 
-      // Pick the pattern (out/back) that yields the largest per-ship mass while honoring maxIndividualMass
-      const patterns = [
-        {out: hot, back: hot},
-        {out: cold, back: hot},
-        {out: hot, back: cold},
-        {out: cold, back: cold}
-      ].filter(p => p.out <= maxInd && p.back <= maxInd);
+      // number of ships needed for full closure:
+      shipCount = Math.ceil(diff / (hot+hot));
 
-      if (patterns.length === 0) {
-        planSummary.textContent = 'Error: neither hot nor cold mass fits the hole’s max individual mass.';
-        planSteps.textContent = '';
-        return;
+      // initial: use 1 cold + (N-1) hot
+      initCold = 1;
+      initHot  = shipCount - 1;
+      const waveMass = initCold * cold + initHot * hot;
+      remAfterInit = startMass - waveMass;
+
+      initSummary.textContent =
+        `Use ${shipCount} ship${shipCount>1?'s':''}: ` +
+        `${initCold} cold + ${initHot} hot to probe the state.`;
+      initSteps.textContent = [
+        `Total starting mass: ${startMass.toLocaleString()} kg`,
+        `Initial jump mass: ${waveMass.toLocaleString()} kg`,
+        `Remaining (estimated): ${remAfterInit.toLocaleString()} kg`
+      ].join('\n');
+    }
+
+    // --- Step 5: return instructions ---
+    function computeReturn(diff) {
+      const cold = parseInt(coldInput.value,10);
+      const hot  = parseInt(hotInput.value,10);
+      for (let h = 0; h <= shipCount; h++) {
+        const c = shipCount - h;
+        if (h * hot + c * cold >= diff) {
+          return { cold: c, hot: h };
+        }
       }
+      // fallback to all hot
+      return { cold: 0, hot: shipCount };
+    }
 
-      patterns.forEach(p => p.per = p.out + p.back);
-      patterns.sort((a, b) => b.per - a.per);  // descending by mass moved per round-trip
-      const best = patterns[0];
-      const ships = Math.ceil(diff / best.per);
+    function buildReturnInstructions() {
+      const total = currentWH.totalMass;
+      const threshCrit = Math.round(total * 0.1);
 
-      // Summary
-      planSummary.textContent =
-        `Use ${ships} ship${ships > 1 ? 's' : ''}, each ` +
-        `jumping ${best.out.toLocaleString()} kg out and ${best.back.toLocaleString()} kg back.`;
+      // mass to move from remAfterInit
+      const needClose = remAfterInit - 0;
+      const needCrit  = remAfterInit - threshCrit;
 
-      // Detailed steps
-      const lines = [
-        `Total mass to move: ${diff.toLocaleString()} kg`,
-        `Mass moved per ship round-trip: ${best.per.toLocaleString()} kg`,
-        `→ You need ${ships} round-trip${ships>1?'s':''}`,
-        ``,
-        `Steps:`,
-        `1) Jump all ${ships} ship${ships>1?'s':''} out at ${best.out.toLocaleString()} kg.`,
-        `2) Return all ${ships} ship${ships>1?'s':''} at ${best.back.toLocaleString()} kg.`,
-        `3) Hole should now be at or past your goal threshold.`
-      ];
-      planSteps.textContent = lines.join('\n');
+      const retClose = computeReturn(needClose);
+      const retCrit  = computeReturn(needCrit);
+
+      returnDiv.innerHTML = `
+        <h3>If Stable:</h3>
+        <p><strong>To Close:</strong> ${retClose.cold} cold & ${retClose.hot} hot</p>
+        <p><strong>To Crit:</strong>  ${retCrit.cold} cold & ${retCrit.hot} hot</p>
+        <h3>If Unstable:</h3>
+        <p><strong>To Close:</strong> ${retClose.cold} cold & ${retClose.hot} hot</p>
+        <p><strong>To Crit:</strong>  ${retCrit.cold} cold & ${retCrit.hot} hot</p>
+      `;
     }
 
     // Initialize
