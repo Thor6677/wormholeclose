@@ -9,5 +9,5 @@ This repository contains a minimal web interface for experimenting with a hypoth
 
 ## Usage
 
-When you open the page you will see controls to initiate the wormhole closing procedure. Interact with the page elements (e.g. a "Close Wormhole" button) to simulate shutting down a wormhole connection. As this is only a demonstration, the page performs no real actions beyond displaying the interface.
+When you open the page you can search for a wormhole type and view its basic information. After selecting a wormhole, the Mass Tracker panel lets you keep track of the remaining mass. Choose a ship hull from the built-in list or enter custom cold/hot mass values, then record each jump to see how the wormhole state changes from **Stable** to **Unstable** and finally **Critical** as mass is depleted.
 

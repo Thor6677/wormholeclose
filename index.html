@@ -18,20 +18,112 @@
   <div id="suggestions" class="hidden"></div>
   <pre id="details"></pre>
 
+  <div id="mass-tracker" class="hidden">
+    <h2>Mass Tracker</h2>
+    <div>Remaining Mass: <span id="remaining-mass"></span></div>
+    <div>State: <span id="wh-state"></span></div>
+    <label>
+      Ship Hull:
+      <select id="ship-select"></select>
+    </label>
+    <label>
+      Cold Mass (kg): <input type="number" id="cold-mass" />
+    </label>
+    <label>
+      Hot Mass (kg): <input type="number" id="hot-mass" />
+    </label>
+    <label>
+      Use Hot Mass <input type="checkbox" id="use-hot" />
+    </label>
+    <button id="add-jump">Add Jump</button>
+    <button id="reset-mass">Reset</button>
+  </div>
+
   <script type="module">
     import { wormholes } from './data/wormholes.js';
 
     const input = document.getElementById('search');
     const suggestions = document.getElementById('suggestions');
     const details = document.getElementById('details');
+    const tracker = document.getElementById('mass-tracker');
+    const remainingSpan = document.getElementById('remaining-mass');
+    const stateSpan = document.getElementById('wh-state');
+    const shipSelect = document.getElementById('ship-select');
+    const coldInput = document.getElementById('cold-mass');
+    const hotInput = document.getElementById('hot-mass');
+    const useHot = document.getElementById('use-hot');
+    const addJump = document.getElementById('add-jump');
+    const resetMass = document.getElementById('reset-mass');
+
+    const defaultShips = [
+      { name: 'Capsule', cold: 10000, hot: 10000 },
+      { name: 'Frigate', cold: 1100000, hot: 1650000 },
+      { name: 'Destroyer', cold: 1500000, hot: 2250000 },
+      { name: 'Cruiser', cold: 12000000, hot: 18000000 },
+      { name: 'Battlecruiser', cold: 13000000, hot: 19500000 },
+      { name: 'Battleship', cold: 63000000, hot: 94500000 },
+      { name: 'Custom', cold: 0, hot: 0 }
+    ];
+
+    defaultShips.forEach(s => {
+      const opt = document.createElement('option');
+      opt.value = s.name;
+      opt.textContent = s.name;
+      shipSelect.appendChild(opt);
+    });
+
+    shipSelect.addEventListener('change', () => {
+      const ship = defaultShips.find(s => s.name === shipSelect.value);
+      if (ship) {
+        coldInput.value = ship.cold;
+        hotInput.value = ship.hot;
+      }
+    });
+
+    let currentWH = null;
+
+    function updateStateDisplay() {
+      if (!currentWH) return;
+      remainingSpan.textContent = currentWH.remainingMass.toLocaleString();
+      const total = currentWH.totalMass;
+      let state = 'Stable';
+      if (currentWH.remainingMass <= total * 0.1) {
+        state = 'Critical';
+      } else if (currentWH.remainingMass <= total * 0.5) {
+        state = 'Unstable';
+      }
+      stateSpan.textContent = state;
+    }
+
+    addJump.addEventListener('click', () => {
+      if (!currentWH) return;
+      const mass = parseInt(useHot.checked ? hotInput.value : coldInput.value, 10) || 0;
+      currentWH.remainingMass = Math.max(0, currentWH.remainingMass - mass);
+      updateStateDisplay();
+    });
+
+    resetMass.addEventListener('click', () => {
+      if (!currentWH) return;
+      currentWH.remainingMass = currentWH.totalMass;
+      updateStateDisplay();
+    });
 
     function clearSuggestions() {
       suggestions.textContent = '';
       suggestions.classList.add('hidden');
+      tracker.classList.add('hidden');
+      currentWH = null;
     }
 
     function showDetails(wh) {
       details.textContent = JSON.stringify(wh, null, 2);
+      tracker.classList.remove('hidden');
+      currentWH = { ...wh, remainingMass: wh.totalMass };
+      shipSelect.value = defaultShips[0].name;
+      coldInput.value = defaultShips[0].cold;
+      hotInput.value = defaultShips[0].hot;
+      useHot.checked = false;
+      updateStateDisplay();
     }
 
     input.addEventListener('input', () => {
