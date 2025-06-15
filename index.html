@@ -103,213 +103,219 @@
     import { wormholes } from './data/wormholes.js';
 
     // State
-    let step = 1, wh = null;
+    let currentStep = 1;
+    let currentWH = null;
     let startMass = 0, goalMass = 0;
     let shipCount = 0, remAfterInit = 0;
     let retClose = {}, retCrit = {};
 
     // Elements
-    const steps = {
+    const steps            = {
       1: document.getElementById('step-1'),
       2: document.getElementById('step-2'),
       3: document.getElementById('step-3'),
       4: document.getElementById('step-4'),
       5: document.getElementById('step-5'),
     };
-    const btnNext  = document.getElementById('btn-next');
-    const btnBack  = document.getElementById('btn-back');
-    const btnReset = document.getElementById('btn-reset');
-    const whSearch = document.getElementById('wh-search');
-    const suggest  = document.getElementById('suggestions');
-    const whDetails= document.getElementById('wh-details');
-    const statusSel= document.getElementById('status-select');
-    const goalSel  = document.getElementById('goal-select');
-    const coldIn   = document.getElementById('cold-mass');
-    const hotIn    = document.getElementById('hot-mass');
-    const initSum  = document.getElementById('initial-summary');
-    const initSt   = document.getElementById('initial-steps');
-    const returnSt = document.getElementById('return-state');
-    const returnDiv= document.getElementById('return-suggestion');
+    const btnNext          = document.getElementById('btn-next');
+    const btnBack          = document.getElementById('btn-back');
+    const btnReset         = document.getElementById('btn-reset');
+    const whSearch         = document.getElementById('wh-search');
+    const suggestions      = document.getElementById('suggestions');
+    const whDetails        = document.getElementById('wh-details');
+    const statusSelect     = document.getElementById('status-select');
+    const goalSelect       = document.getElementById('goal-select');
+    const coldInput        = document.getElementById('cold-mass');
+    const hotInput         = document.getElementById('hot-mass');
+    const initialSummary   = document.getElementById('initial-summary');
+    const initialSteps     = document.getElementById('initial-steps');
+    const returnState      = document.getElementById('return-state');
+    const returnSuggestion = document.getElementById('return-suggestion');
 
-    function show(n) {
-      Object.values(steps).forEach(s => s.classList.remove('active'));
+    function showStep(n) {
+      Object.values(steps).forEach(el => el.classList.remove('active'));
       steps[n].classList.add('active');
-      btnBack.disabled = n === 1;
+      btnBack.disabled = (n === 1);
       btnNext.textContent = n === 5 ? 'Finish' : 'Next';
     }
 
     // Reset
     btnReset.onclick = () => {
-      step = 1; wh = null;
+      currentStep = 1;
+      currentWH = null;
       startMass = goalMass = 0;
       shipCount = remAfterInit = 0;
       retClose = retCrit = {};
       whSearch.value = '';
-      suggest.innerHTML = whDetails.innerHTML = '';
-      coldIn.value = hotIn.value = '';
-      initSum.textContent = initSt.textContent = '';
-      returnDiv.innerHTML = '';
-      show(1);
+      suggestions.innerHTML = '';
+      whDetails.innerHTML = '';
+      coldInput.value = '';
+      hotInput.value = '';
+      initialSummary.textContent = '';
+      initialSteps.textContent = '';
+      returnSuggestion.innerHTML = '';
+      showStep(1);
     };
 
     // Back
     btnBack.onclick = () => {
-      if (step > 1) show(--step);
+      if (currentStep > 1) {
+        currentStep--;
+        showStep(currentStep);
+      }
     };
 
     // Next
     btnNext.onclick = () => {
-      if (step === 1 && !wh) {
-        alert('Select a wormhole'); return;
+      if (currentStep === 1 && !currentWH) {
+        alert('Please select a wormhole.');
+        return;
       }
-      if (step === 2) {
-        const pct = { stable: 1, unstable: .5, critical: .1 }[statusSel.value];
-        startMass = Math.round(wh.totalMass * pct);
-        goalMass  = goalSel.value === 'close'
+      if (currentStep === 2) {
+        const pct = { stable: 1, unstable: 0.5, critical: 0.1 }[statusSelect.value];
+        startMass = Math.round(currentWH.totalMass * pct);
+        goalMass  = goalSelect.value === 'close'
           ? 0
-          : Math.round(wh.totalMass * .1);
+          : Math.round(currentWH.totalMass * 0.1);
       }
-      if (step === 3) {
-        if (!coldIn.value || !hotIn.value) {
-          alert('Enter both cold & hot mass'); return;
+      if (currentStep === 3) {
+        if (!coldInput.value || !hotInput.value) {
+          alert('Enter both cold & hot mass.');
+          return;
         }
-        buildInitial();
+        buildInitialPlan();
       }
-      if (step === 4) {
-        prepareReturn();
-        drawReturn();
+      if (currentStep === 4) {
+        prepareReturnData();
+        drawReturnSuggestion();
       }
-      if (step < 5) show(++step);
-      else alert('Done! Reset to start again.');
+      if (currentStep < 5) {
+        currentStep++;
+        showStep(currentStep);
+      } else {
+        alert('Process complete! Reset to start over.');
+      }
     };
 
-    // Step 1 search
+    // Step 1: search & select
     whSearch.oninput = () => {
-      const q = whSearch.value.toUpperCase().trim();
-      suggest.innerHTML = whDetails.innerHTML = '';
-      wh = null;
+      const q = whSearch.value.trim().toUpperCase();
+      suggestions.innerHTML = '';
+      whDetails.innerHTML = '';
+      currentWH = null;
       if (!q) return;
       wormholes
-        .filter(x => x.type.startsWith(q))
+        .filter(w => w.type.startsWith(q))
         .slice(0, 8)
-        .forEach(x => {
-          const d = document.createElement('div');
-          d.className = 'suggestion';
-          d.textContent = x.type;
-          d.onclick = () => selectWH(x);
-          suggest.appendChild(d);
+        .forEach(w => {
+          const div = document.createElement('div');
+          div.className = 'suggestion';
+          div.textContent = w.type;
+          div.onclick = () => selectWormhole(w);
+          suggestions.appendChild(div);
         });
     };
 
-    function selectWH(x) {
-      wh = { ...x };
-      whSearch.value = x.type;
-      suggest.innerHTML = '';
-      let html = `<strong>${x.type}</strong><ul>
-        <li>From: ${x.from || '—'}</li>
-        <li>To: ${x.to}</li>
-        <li>Total Mass: ${x.totalMass.toLocaleString()}</li>
-        <li>Max Jump Mass: ${x.maxIndividualMass.toLocaleString()}</li>
-        <li>Class: ${x.classification}</li>
-        <li>Max Stable Time: ${x.maxStableTime} h</li>`;
-      if (x.massRegeneration) {
-        html += `<li>Regen: ${x.massRegeneration.toLocaleString()}/s</li>`;
+    function selectWormhole(w) {
+      currentWH = { ...w };
+      whSearch.value = w.type;
+      suggestions.innerHTML = '';
+      let html = `<strong>${w.type}</strong><ul>
+        <li>From: ${w.from || '—'}</li>
+        <li>To: ${w.to}</li>
+        <li>Total Mass: ${w.totalMass.toLocaleString()}</li>
+        <li>Max per Jump: ${w.maxIndividualMass.toLocaleString()}</li>
+        <li>Class: ${w.classification}</li>
+        <li>Max Stable Time: ${w.maxStableTime} h</li>`;
+      if (w.massRegeneration) {
+        html += `<li>Regen: ${w.massRegeneration.toLocaleString()}/s</li>`;
       }
       html += `</ul>`;
       whDetails.innerHTML = html;
     }
 
-// Step 4: dynamic initial jump plan
-function buildInitialPlan() {
-  const cold   = parseInt(coldInput.value, 10);
-  const hot    = parseInt(hotInput.value, 10);
-  const total  = currentWH.totalMass;
-  const maxInd = currentWH.maxIndividualMass;
-  const status = statusSelect.value;
+    // Step 4: dynamic initial jump plan
+    function buildInitialPlan() {
+      const cold   = parseInt(coldInput.value, 10);
+      const hot    = parseInt(hotInput.value,  10);
+      const total  = currentWH.totalMass;
+      const maxInd = currentWH.maxIndividualMass;
+      const status = statusSelect.value;
 
-  // Determine the *next* threshold after your current status:
-  let nextThreshold;
-  if (status === 'stable')   nextThreshold = total * 0.5;
-  else if (status === 'unstable') nextThreshold = total * 0.1;
-  else /* critical */         nextThreshold = goalMass; // usually 0
+      // determine next threshold
+      let nextThreshold;
+      if (status === 'stable')       nextThreshold = total * 0.5;
+      else if (status === 'unstable') nextThreshold = total * 0.1;
+      else /* critical */             nextThreshold = goalMass;
 
-  // How much mass we must remove to cross into that band:
-  const requiredRemoval = Math.max(0, startMass - nextThreshold) + 1;
+      const requiredRemoval = Math.max(0, startMass - nextThreshold) + 1;
 
-  // Sanity check: ensure neither your cold nor hot mass exceed the hole's limit:
-  if (cold > maxInd || hot > maxInd) {
-    alert(`Error: Your ship mass (${cold}/${hot} kg) exceeds this hole's max per-ship mass (${maxInd.toLocaleString()} kg).`);
-    return;
-  }
-
-  // Search for the *smallest* N where some combination (h hot + c cold) ≥ requiredRemoval.
-  let best = null;
-  const MAX_SHIPS = 20;  // arbitrary cap to avoid infinite loops
-  for (let N = 1; N <= MAX_SHIPS; N++) {
-    for (let h = 0; h <= N; h++) {
-      const c      = N - h;
-      const moved  = h * hot + c * cold;
-      // also ensure that each *individual* hot/cold ≤ maxInd (we already did)
-      if (moved >= requiredRemoval) {
-        if (
-          best === null ||
-          N < best.N ||
-          (N === best.N && moved < best.removal)
-        ) {
-          best = { N, coldCount: c, hotCount: h, removal: moved };
-        }
+      if (cold > maxInd || hot > maxInd) {
+        alert(`Ship mass (${cold}/${hot} kg) exceeds hole max (${maxInd.toLocaleString()} kg).`);
+        return;
       }
+
+      // find minimal N with h * hot + c * cold >= requiredRemoval
+      let best = null;
+      const MAX_SHIPS = 20;
+      for (let N = 1; N <= MAX_SHIPS; N++) {
+        for (let h = 0; h <= N; h++) {
+          const c = N - h;
+          const moved = h * hot + c * cold;
+          if (moved >= requiredRemoval) {
+            if (!best || N < best.N || (N === best.N && moved < best.moved)) {
+              best = { N, coldCount: c, hotCount: h, moved };
+            }
+          }
+        }
+        if (best) break;
+      }
+
+      // fallback: use all hot or all cold
+      if (!best) {
+        const patterns = [
+          { c: 0, h: 1, mass: hot },
+          { c: 1, h: 0, mass: cold }
+        ];
+        patterns.sort((a,b) => b.mass - a.mass);
+        const perShip     = patterns[0].mass;
+        const shipsNeeded = Math.ceil(requiredRemoval / perShip);
+        best = {
+          N: shipsNeeded,
+          coldCount: patterns[0].c * shipsNeeded,
+          hotCount:  patterns[0].h * shipsNeeded,
+          moved: perShip * shipsNeeded
+        };
+      }
+
+      shipCount    = best.N;
+      remAfterInit = startMass - best.moved;
+
+      initialSummary.textContent =
+        `Use ${shipCount} ship${shipCount>1?'s':''}: ` +
+        `${best.coldCount} cold & ${best.hotCount} hot for the test jump.`;
+      initialSteps.textContent = [
+        `Starting mass: ${startMass.toLocaleString()} kg`,
+        `Moved mass:   ${best.moved.toLocaleString()} kg`,
+        `Remaining:    ${remAfterInit.toLocaleString()} kg`
+      ].join('\n');
     }
-    if (best) break;  // once we have the minimal N, stop
-  }
 
-  // Fallback: if we never found a tight fit, just maximize per-ship mass
-  if (!best) {
-    // pick the pattern with largest per-round-trip mass:
-    const patterns = [
-      { c: 0, h: 1, per: hot },
-      { c: 1, h: 0, per: cold }
-    ];
-    patterns.sort((a,b) => b.per - a.per);
-    const perShip     = patterns[0].per;
-    const shipsNeeded = Math.ceil(requiredRemoval / perShip);
-    best = {
-      N: shipsNeeded,
-      coldCount: patterns[0].c * shipsNeeded,
-      hotCount:  patterns[0].h * shipsNeeded,
-      removal: patterns[0].per * shipsNeeded
-    };
-  }
-
-  // Commit to state
-  shipCount     = best.N;
-  const moved   = best.removal;
-  remAfterInit  = startMass - moved;
-
-  // Render to user
-  initialSummary.textContent =
-    `Use ${shipCount} ship${shipCount>1?'s':''}: ` +
-    `${best.coldCount} cold & ${best.hotCount} hot for the test jump.`;
-  initialSteps.textContent = [
-    `Starting mass: ${startMass.toLocaleString()} kg`,
-    `Mass moved:     ${moved.toLocaleString()} kg`,
-    `Est. remaining: ${remAfterInit.toLocaleString()} kg`
-  ].join('\n');
-}
-
-    // Prepare return data
-    function prepareReturn() {
-      const cold = +coldIn.value, hot = +hotIn.value;
-      const total = wh.totalMass;
-      const th10  = Math.round(total * .1);
+    // prepare return data
+    function prepareReturnData() {
+      const cold = parseInt(coldInput.value, 10);
+      const hot  = parseInt(hotInput.value,  10);
+      const total    = currentWH.totalMass;
+      const threshold10 = Math.round(total * 0.1);
       const needClose = remAfterInit - 0;
-      const needCrit  = remAfterInit - th10;
-      retClose = calc(needClose);
-      retCrit  = calc(needCrit);
+      const needCrit  = remAfterInit - threshold10;
+      retClose = computeReturnPlan(needClose);
+      retCrit  = computeReturnPlan(needCrit);
     }
 
-    function calc(diff) {
-      const cold = +coldIn.value, hot = +hotIn.value;
+    function computeReturnPlan(diff) {
+      const cold = parseInt(coldInput.value, 10);
+      const hot  = parseInt(hotInput.value,  10);
       for (let h = 0; h <= shipCount; h++) {
         const c = shipCount - h;
         if (h*hot + c*cold >= diff) return { cold: c, hot: h };
@@ -317,39 +323,42 @@ function buildInitialPlan() {
       return { cold: 0, hot: shipCount };
     }
 
-    // Draw on change
-    returnSt.addEventListener('change', drawReturn);
+    // update on change
+    returnState.addEventListener('change', drawReturnSuggestion);
 
-    function drawReturn() {
-      const st = returnSt.value;
-      const cClose = passable(retClose), cCrit = passable(retCrit);
-      returnDiv.innerHTML = `
-        <p><strong>If ${st.charAt(0).toUpperCase()+st.slice(1)}:</strong></p>
+    function drawReturnSuggestion() {
+      const state = returnState.value;
+      const passClose = calcPassable(retClose);
+      const passCrit  = calcPassable(retCrit);
+
+      returnSuggestion.innerHTML = `
+        <p><strong>If ${state.charAt(0).toUpperCase() + state.slice(1)}:</strong></p>
         <p>To Close: ${retClose.cold} cold & ${retClose.hot} hot` +
-        (cClose.stranded
-          ? ` → ${cClose.stranded} ship${cClose.stranded>1?'s':''} may be stranded`
-          : ` (all will pass)`) +
-        `</p>
+          (passClose.stranded
+            ? ` → ${passClose.stranded} ship${passClose.stranded>1?'s':''} may be stranded`
+            : ` (all pass)`
+          ) + `</p>
         <p>To Crit:  ${retCrit.cold} cold & ${retCrit.hot} hot` +
-        (cCrit.stranded
-          ? ` → ${cCrit.stranded} may be stranded`
-          : ` (all will pass)`) +
-        `</p>
+          (passCrit.stranded
+            ? ` → ${passCrit.stranded} may be stranded`
+            : ` (all pass)`
+          ) + `</p>
       `;
     }
 
-    function passable(plan) {
+    function calcPassable(plan) {
       let rem = remAfterInit;
-      const cold = +coldIn.value, hot = +hotIn.value;
-      const hPass = Math.min(plan.hot, Math.floor(rem/hot));
-      rem -= hPass * hot;
-      const cPass = Math.min(plan.cold, Math.floor(rem/cold));
-      const stranded = shipCount - (hPass + cPass);
+      const cold = parseInt(coldInput.value,10);
+      const hot  = parseInt(hotInput.value,10);
+      const hotPass = Math.min(plan.hot, Math.floor(rem/hot));
+      rem -= hotPass * hot;
+      const coldPass = Math.min(plan.cold, Math.floor(rem/cold));
+      const stranded = shipCount - (hotPass + coldPass);
       return { stranded };
     }
 
-    // Initialize
-    show(1);
+    // init
+    showStep(1);
   </script>
 
 </body>
