@@ -219,20 +219,83 @@
       whDetails.innerHTML = html;
     }
 
-    // Step 4: compute initial jump
-    function buildInitial() {
-      const cold = +coldIn.value, hot = +hotIn.value;
-      const diff = Math.max(0, startMass - goalMass);
-      shipCount = Math.ceil( diff / (hot + hot) );
-      remAfterInit = startMass - (cold + hot * (shipCount - 1));
-      initSum.textContent =
-        `Use ${shipCount} ships: 1 cold & ${shipCount-1} hot.`;
-      initSt.textContent = [
-        `Start: ${startMass.toLocaleString()} kg`,
-        `Jump: ${(cold + (shipCount-1)*hot).toLocaleString()} kg`,
-        `Est remaining: ${remAfterInit.toLocaleString()} kg`
-      ].join('\n');
+// Step 4: dynamic initial jump plan
+function buildInitialPlan() {
+  const cold   = parseInt(coldInput.value, 10);
+  const hot    = parseInt(hotInput.value, 10);
+  const total  = currentWH.totalMass;
+  const maxInd = currentWH.maxIndividualMass;
+  const status = statusSelect.value;
+
+  // Determine the *next* threshold after your current status:
+  let nextThreshold;
+  if (status === 'stable')   nextThreshold = total * 0.5;
+  else if (status === 'unstable') nextThreshold = total * 0.1;
+  else /* critical */         nextThreshold = goalMass; // usually 0
+
+  // How much mass we must remove to cross into that band:
+  const requiredRemoval = Math.max(0, startMass - nextThreshold) + 1;
+
+  // Sanity check: ensure neither your cold nor hot mass exceed the hole's limit:
+  if (cold > maxInd || hot > maxInd) {
+    alert(`Error: Your ship mass (${cold}/${hot} kg) exceeds this hole's max per-ship mass (${maxInd.toLocaleString()} kg).`);
+    return;
+  }
+
+  // Search for the *smallest* N where some combination (h hot + c cold) ≥ requiredRemoval.
+  let best = null;
+  const MAX_SHIPS = 20;  // arbitrary cap to avoid infinite loops
+  for (let N = 1; N <= MAX_SHIPS; N++) {
+    for (let h = 0; h <= N; h++) {
+      const c      = N - h;
+      const moved  = h * hot + c * cold;
+      // also ensure that each *individual* hot/cold ≤ maxInd (we already did)
+      if (moved >= requiredRemoval) {
+        if (
+          best === null ||
+          N < best.N ||
+          (N === best.N && moved < best.removal)
+        ) {
+          best = { N, coldCount: c, hotCount: h, removal: moved };
+        }
+      }
     }
+    if (best) break;  // once we have the minimal N, stop
+  }
+
+  // Fallback: if we never found a tight fit, just maximize per-ship mass
+  if (!best) {
+    // pick the pattern with largest per-round-trip mass:
+    const patterns = [
+      { c: 0, h: 1, per: hot },
+      { c: 1, h: 0, per: cold }
+    ];
+    patterns.sort((a,b) => b.per - a.per);
+    const perShip     = patterns[0].per;
+    const shipsNeeded = Math.ceil(requiredRemoval / perShip);
+    best = {
+      N: shipsNeeded,
+      coldCount: patterns[0].c * shipsNeeded,
+      hotCount:  patterns[0].h * shipsNeeded,
+      removal: patterns[0].per * shipsNeeded
+    };
+  }
+
+  // Commit to state
+  shipCount     = best.N;
+  const moved   = best.removal;
+  remAfterInit  = startMass - moved;
+
+  // Render to user
+  initialSummary.textContent =
+    `Use ${shipCount} ship${shipCount>1?'s':''}: ` +
+    `${best.coldCount} cold & ${best.hotCount} hot for the test jump.`;
+  initialSteps.textContent = [
+    `Starting mass: ${startMass.toLocaleString()} kg`,
+    `Mass moved:     ${moved.toLocaleString()} kg`,
+    `Est. remaining: ${remAfterInit.toLocaleString()} kg`
+  ].join('\n');
+}
 
     // Prepare return data
     function prepareReturn() {
