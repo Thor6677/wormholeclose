@@ -139,7 +139,7 @@
       btnNext.textContent = n === 5 ? 'Finish' : 'Next';
     }
 
-    // Reset
+    // Reset handler
     btnReset.onclick = () => {
       currentStep = 1;
       currentWH = null;
@@ -157,7 +157,7 @@
       showStep(1);
     };
 
-    // Back
+    // Back handler
     btnBack.onclick = () => {
       if (currentStep > 1) {
         currentStep--;
@@ -165,7 +165,7 @@
       }
     };
 
-    // Next
+    // Next handler
     btnNext.onclick = () => {
       if (currentStep === 1 && !currentWH) {
         alert('Please select a wormhole.');
@@ -197,7 +197,7 @@
       }
     };
 
-    // Step 1: search & select
+    // Step 1: search & select wormhole
     whSearch.oninput = () => {
       const q = whSearch.value.trim().toUpperCase();
       suggestions.innerHTML = '';
@@ -234,15 +234,15 @@
       whDetails.innerHTML = html;
     }
 
-    // Step 4: dynamic initial jump plan
+    // Step 4: dynamic initial jump calculation
     function buildInitialPlan() {
-      const cold   = parseInt(coldInput.value, 10);
-      const hot    = parseInt(hotInput.value,  10);
+      const cold = parseInt(coldInput.value, 10);
+      const hot  = parseInt(hotInput.value,  10);
       const total  = currentWH.totalMass;
       const maxInd = currentWH.maxIndividualMass;
       const status = statusSelect.value;
 
-      // determine next threshold
+      // next band threshold
       let nextThreshold;
       if (status === 'stable')       nextThreshold = total * 0.5;
       else if (status === 'unstable') nextThreshold = total * 0.1;
@@ -255,7 +255,6 @@
         return;
       }
 
-      // find minimal N with h * hot + c * cold >= requiredRemoval
       let best = null;
       const MAX_SHIPS = 20;
       for (let N = 1; N <= MAX_SHIPS; N++) {
@@ -270,8 +269,6 @@
         }
         if (best) break;
       }
-
-      // fallback: use all hot or all cold
       if (!best) {
         const patterns = [
           { c: 0, h: 1, mass: hot },
@@ -301,11 +298,11 @@
       ].join('\n');
     }
 
-    // prepare return data
+    // prepare return plans
     function prepareReturnData() {
       const cold = parseInt(coldInput.value, 10);
       const hot  = parseInt(hotInput.value,  10);
-      const total    = currentWH.totalMass;
+      const total      = currentWH.totalMass;
       const threshold10 = Math.round(total * 0.1);
       const needClose = remAfterInit - 0;
       const needCrit  = remAfterInit - threshold10;
@@ -323,9 +320,7 @@
       return { cold: 0, hot: shipCount };
     }
 
-    // update on change
     returnState.addEventListener('change', drawReturnSuggestion);
-
     function drawReturnSuggestion() {
       const state = returnState.value;
       const passClose = calcPassable(retClose);
@@ -357,7 +352,7 @@
       return { stranded };
     }
 
-    // init
+    // Initialize wizard
     showStep(1);
   </script>
 
