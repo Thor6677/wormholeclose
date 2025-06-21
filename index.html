@@ -26,22 +26,21 @@
       <label>Current Estimated Mass Remaining:
         <input type="number" id="remaining-mass" placeholder="e.g. 1,800,000,000 kg" />
       </label>
-    </section>
 
-    <section class="ship-jumps">
-      <h2>Ship Jump Tracker</h2>
-      
-      <label>Ship Mass (kg):
-        <input type="number" id="ship-mass" placeholder="e.g. 300,000,000" />
+      <label>Current Status:
+        <select id="wormhole-status">
+          <option value="stable">Stable (100–50%)</option>
+          <option value="unstable">Unstable (50–10%)</option>
+          <option value="critical">Critical (<10%)</option>
+        </select>
       </label>
-      
-      <button onclick="logJump()">Log Jump</button>
-      <ul id="jump-log"></ul>
+
+      <button onclick="generateRollPlan()">Generate Rolling Plan</button>
     </section>
 
-    <section class="status">
-      <h2>Status</h2>
-      <p id="status-text">Waiting for data...</p>
+    <section class="roll-plan">
+      <h2>Rolling Plan</h2>
+      <div id="plan-output"></div>
     </section>
   </div>
 
