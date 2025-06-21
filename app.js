@@ -1,35 +1,35 @@
 import { wormholes } from './data/wormholes.js';
 
-const BS_COLD  = 200_000_000;   // Battleship cold jump mass
-const BS_HOT   = 300_000_000;   // Battleship hot jump mass
-const HIC_COLD =   830_000;     // HIC cold jump mass (entangled)
-const HIC_HOT  = 132_400_000;   // HIC hot jump mass
+const BS_COLD  = 200_000_000;   // Battleship cold jump
+const BS_HOT   = 300_000_000;   // Battleship hot jump
+const HIC_COLD =   830_000;     // HIC cold jump (entangled)
+const HIC_HOT  = 132_400_000;   // HIC hot jump
 
 let maxMass = 0;
 
 function init() {
   const typeSel   = document.getElementById('wormhole-type');
-  const statusSel = document.getElementById('wormhole-status');
   const genBtn    = document.getElementById('generate-btn');
 
-  // Populate wormhole types
+  // Populate wormhole dropdown
   wormholes.forEach(w => {
-    const opt = document.createElement('option');
-    opt.value = w.type;
-    opt.textContent = `${w.type} – ${w.from || '?'} → ${w.to || '?'}`;
-    typeSel.append(opt);
+    const o = document.createElement('option');
+    o.value = w.type;
+    o.textContent = `${w.type} – ${w.from || '?'} → ${w.to || '?'}`;
+    typeSel.append(o);
   });
 
-  // Update maxMass when a type is selected
+  // When type changes, update maxMass
   typeSel.addEventListener('change', () => {
     const w = wormholes.find(x => x.type === typeSel.value);
-    maxMass = w ? w.totalMass : 0;
+    maxMass = w ? w.totalMass * 1_000 : 0; 
+    // multiply by 1_000 because data is in millions but we treat in kg
   });
 
   genBtn.addEventListener('click', generatePlan);
 }
 
-// Determine wormhole class by maxMass
+// Classify by **millions** of kg
 function getColorCode() {
   if (maxMass >= 3_300_000_000) return 'orange'; // 3300G
   if (maxMass >= 3_000_000_000) return 'yellow'; // 3000G
@@ -56,31 +56,29 @@ function generatePlan() {
   const color = getColorCode();
   let plan = `<div class="plan-box"><strong>${type}</strong> — <em>${status.toUpperCase()}</em><br><br>`;
 
-  // ===== CRITICAL =====
+  // ========== CRITICAL ==========
   if (status === 'critical') {
     plan += `
       1. HIC Cold jump <strong>IN</strong> (${HIC_COLD.toLocaleString()} kg)<br>
       2. HIC HOT jump <strong>OUT</strong> (${HIC_HOT.toLocaleString()} kg) → collapse<br>
-      <em>(Repeat HIC Cold IN → HIC HOT OUT if not yet collapsed.)</em><br>
-      <em>Ends on original side.</em>
+      <em>(Repeat until popped; always ends on starting side.)</em>
     `;
   }
 
-  // ===== UNSTABLE =====
+  // ========== UNSTABLE ==========
   else if (status === 'unstable') {
-    // worst-case remaining = 11% of maxMass
-    const rem = maxMass * 0.11;
-    plan += `<!-- Estimated remaining ≈ ${Math.floor(rem).toLocaleString()} kg -->`;
+    const rem = maxMass * 0.11; // assume 11% worst-case
+    plan += `<!-- ~${Math.floor(rem).toLocaleString()} kg remaining -->`;
 
-    // If hole too small for battleship cold:
     if (rem < BS_COLD) {
+      // Hole too small for BS
       plan += `
         1. HIC Cold jump <strong>IN</strong> (${HIC_COLD.toLocaleString()} kg)<br>
         2. HIC HOT jump <strong>OUT</strong> (${HIC_HOT.toLocaleString()} kg) → collapse<br>
         <em>1 ship, ends same side.</em>
       `;
-    }
-    else {
+    } else {
+      // Battleship in/out
       plan += `
         1. Battleship Cold jump <strong>IN</strong> (${BS_COLD.toLocaleString()} kg)<br>
         2. Battleship HOT jump <strong>OUT</strong> (${BS_HOT.toLocaleString()} kg) → collapse<br>
@@ -89,7 +87,7 @@ function generatePlan() {
     }
   }
 
-  // ===== STABLE =====
+  // ========== STABLE ==========
   else if (status === 'stable') {
     switch (color) {
       case 'blue': // 1000G
@@ -106,7 +104,7 @@ function generatePlan() {
 
           <strong>If NO:</strong><br>
           • To Roll: 2 Hot Jumps<br>
-          • To Crit: 1 Cold Jump + 1 Hot Jump<br><br>
+          • To Crit: 1 Cold + 1 Hot Jump<br><br>
 
           <em>All ships end on original side.</em>
         `;
@@ -141,11 +139,11 @@ function generatePlan() {
 
           <strong>If YES:</strong><br>
           • To Roll: Return Hot + 4 Hot Jumps<br>
-          • To Crit: Return Hot + Cold Jumps + 2 Hot Jumps<br><br>
+          • To Crit: Return Hot + Cold + 2 Hot Jumps<br><br>
 
           <strong>If NO:</strong><br>
           • To Roll: Return Hot + 5 Hot Jumps<br>
-          • To Crit: Return Hot + Cold Jumps + 3 Hot Jumps<br><br>
+          • To Crit: Return Hot + Cold + 3 Hot Jumps<br><br>
 
           <em>All ships end on original side.</em>
         `;
@@ -155,7 +153,7 @@ function generatePlan() {
         plan += `
           🟧 <strong>3300G Wormhole</strong><br><br>
           <strong>Initial Check:</strong><br>
-          • 1 Cold Jump + 5 Hot Jumps<br>
+          • 1 Cold + 5 Hot Jumps<br>
           🔍 Ask: Is the hole reduced?<br><br>
 
           <strong>If YES:</strong><br>
@@ -171,7 +169,7 @@ function generatePlan() {
         break;
 
       default:
-        plan += `⚠️ No stable-state logic defined for this wormhole class.`;
+        plan += `⚠️ No stable-state logic for this wormhole class.`;
     }
   }
 
