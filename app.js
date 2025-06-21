@@ -1,219 +1,144 @@
 import { wormholes } from './data/wormholes.js';
 
 // ────────────────────────────────────────────
-// Ship jump masses, in the same TONNES unit as your JSON
+// Jump‐mass constants in TONNES (match your JSON)
 // ────────────────────────────────────────────
-const SHIPS = {
+const JumpMass = {
   Battleship: { cold: 200_000, hot: 300_000 },
   Cruiser:    { cold:  36_000, hot: 126_000 },
   HIC:        { cold:     830, hot: 132_400 },
 };
 
-let maxMass       = 0;   // wormhole.totalMass in t
-let maxIndMass    = 0;   // wormhole.maxIndividualMass in t
-
 function init() {
   const typeSel = document.getElementById('wormhole-type');
   const genBtn  = document.getElementById('generate-btn');
 
-  // 1) Populate the wormhole dropdown
+  // Populate the type dropdown
   wormholes.forEach(w => {
-    const opt = document.createElement('option');
-    opt.value = w.type;
-    opt.textContent = `${w.type} – ${w.from||'?'} → ${w.to||'?'}`;
-    typeSel.appendChild(opt);
+    const o = document.createElement('option');
+    o.value = w.type;
+    o.textContent = `${w.type} – ${w.from||'?'} → ${w.to||'?'}`;
+    typeSel.appendChild(o);
   });
 
-  // 2) When a wormhole is chosen, store its mass limits
-  typeSel.addEventListener('change', () => {
-    const w = wormholes.find(x => x.type === typeSel.value);
-    if (w) {
-      maxMass    = w.totalMass;
-      maxIndMass = w.maxIndividualMass;
-    } else {
-      maxMass = maxIndMass = 0;
-    }
-  });
-
-  // 3) Wire up the button
   genBtn.addEventListener('click', generatePlan);
 }
 
-// Return the “largest” ship that can do a cold/hot jump under maxIndMass
-function getBestShipForJump(mode /* 'cold' or 'hot' */) {
+// Pick the largest ship whose jump‐mass ≤ maxIndividual
+function getBestShipForJump(mode, maxIndividual) {
   for (const type of ['Battleship','Cruiser','HIC']) {
-    const mass = SHIPS[type][mode];
-    if (mass <= maxIndMass) {
+    const mass = JumpMass[type][mode];
+    if (mass <= maxIndividual) {
       return { type, mass };
     }
   }
   return null;
 }
 
-// Classify wormhole by its totalMass
-function getClassKey() {
-  if (maxMass >= 3_300_000) return 'orange';
-  if (maxMass >= 3_000_000) return 'yellow';
-  if (maxMass >= 2_000_000) return 'green';
-  if (maxMass >= 1_000_000) return 'blue';
+// Determine class key by totalMass (tonnes)
+function getClassKey(totalMass) {
+  if (totalMass >= 3_300_000) return 'orange';
+  if (totalMass >= 3_000_000) return 'yellow';
+  if (totalMass >= 2_000_000) return 'green';
+  if (totalMass >= 1_000_000) return 'blue';
   return null;
 }
 
-// Your “Method-Only” stable plans, keyed by classKey
-const STABLE_PLANS = {
-  blue: {
-    title: '1000G Wormhole',
-    initial: [{c:1,m:'cold'},{c:1,m:'hot'}],
-    yes:   { roll:[{c:2,m:'hot'}],              crit:[{c:2,m:'cold'}] },
-    no:    { roll:[{c:2,m:'hot'}],              crit:[{c:1,m:'cold'},{c:1,m:'hot'}] }
-  },
-  green: {
-    title: '2000G Wormhole',
-    initial: [{c:2,m:'cold'},{c:2,m:'hot'}],
-    yes:   { roll:[{c:2,m:'cold'},{c:2,m:'hot'}], crit:[{c:4,m:'cold'}] },
-    no:    { roll:[{c:4,m:'hot'}],              crit:[{c:2,m:'cold'},{c:2,m:'hot'}] }
-  },
-  yellow: {
-    title: '3000G Wormhole',
-    initial: [{c:5,m:'hot'}],
-    yes:   { roll:[{c:1,m:'hot'},{c:4,m:'hot'}], crit:[{c:1,m:'hot'},{c:1,m:'cold'},{c:2,m:'hot'}] },
-    no:    { roll:[{c:1,m:'hot'},{c:5,m:'hot'}], crit:[{c:1,m:'hot'},{c:1,m:'cold'},{c:3,m:'hot'}] }
-  },
-  orange: {
-    title: '3300G Wormhole',
-    initial: [{c:1,m:'cold'},{c:5,m:'hot'}],
-    yes:   { roll:[{c:2,m:'cold'},{c:4,m:'hot'}], crit:[{c:4,m:'hot'},{c:1,m:'cold'}] },
-    no:    { roll:[{c:6,m:'hot'}],              crit:[{c:1,m:'cold'},{c:5,m:'hot'}] }
-  }
-};
+/**
+ * Calculate the optimal collapse plan:
+ * @param {number} totalMass       – wormhole.totalMass in t
+ * @param {number} maxIndividual   – wormhole.maxIndividualMass in t
+ * @param {'stable'|'unstable'|'critical'} status
+ * @returns {object|null}
+ */
+function calculateOptimalCollapse(totalMass, maxIndividual, status) {
+  // 1) define remaining‐mass threshold:
+  //    stable → 50%; unstable/critical → 10%
+  const threshold =
+    status === 'stable'   ? totalMass * 0.50
+  : status === 'unstable' ? totalMass * 0.10
+  :                           totalMass * 0.10;
 
-function generatePlan() {
-  const type   = document.getElementById('wormhole-type').value;
-  const status = document.getElementById('wormhole-status').value;
-  const out    = document.getElementById('plan-output');
-  out.innerHTML = '';  // clear
-
-  // Basic validations
-  if (!type) {
-    out.textContent = '❗ Please select a wormhole type.';
-    return;
-  }
-  if (!maxMass || !maxIndMass) {
-    out.textContent = '❗ Invalid wormhole mass limits.';
-    return;
-  }
-
-  let html = `<div class="plan-box"><h3>${type} — ${status.toUpperCase()}</h3>`;
-
-  // 1) CRITICAL
+  // 2) critical: force HIC if it fits
   if (status === 'critical') {
-    const inSh  = getBestShipForJump('cold');
-    const outSh = getBestShipForJump('hot');
-    if (!inSh || !outSh) {
-      html += `<p>⚠️ No ship ≤ ${maxIndMass.toLocaleString()} t can make a cold→hot combo here.</p>`;
-    } else {
-      html += `
-      <h4>Critical (<10%)</h4>
-      <ul>
-        <li>${inSh.type} Cold IN (${inSh.mass.toLocaleString()} t)</li>
-        <li>${outSh.type} Hot  OUT (${outSh.mass.toLocaleString()} t) → collapse</li>
-      </ul>
-      <p><em>Repeat until it pops; all ships end on the same side.</em></p>`;
+    const inSh  = getBestShipForJump('cold', maxIndividual);
+    const outSh = getBestShipForJump('hot',  maxIndividual);
+    if (inSh?.type === 'HIC' && outSh?.type === 'HIC') {
+      return { shipType:'HIC', trips:1, threshold };
     }
+    return null;
   }
 
-  // 2) UNSTABLE
-  else if (status === 'unstable') {
-    const rem = Math.floor(maxMass * 0.11);
-    html += `<h4>Unstable (≈${rem.toLocaleString()} t remaining)</h4>`;
-
-    // If a Battleship can do the full in/out safely
-    if (
-      SHIPS.Battleship.cold <= rem &&
-      SHIPS.Battleship.cold <= maxIndMass &&
-      SHIPS.Battleship.hot  <= maxIndMass
-    ) {
-      html += `
-      <ul>
-        <li>Battleship Cold IN (${SHIPS.Battleship.cold.toLocaleString()} t)</li>
-        <li>Battleship Hot  OUT (${SHIPS.Battleship.hot .toLocaleString()} t) → collapse</li>
-      </ul>
-      <p><em>1 battleship; ends on the same side.</em></p>`;
-    } else {
-      const inSh  = getBestShipForJump('cold');
-      const outSh = getBestShipForJump('hot');
-      if (!inSh || !outSh) {
-        html += `<p>⚠️ No single-ship combo ≤ ${maxIndMass.toLocaleString()} t can collapse this Unstable hole.</p>`;
-      } else {
-        html += `
-        <ul>
-          <li>${inSh.type} Cold IN (${inSh.mass.toLocaleString()} t)</li>
-          <li>${outSh.type} Hot  OUT (${outSh.mass.toLocaleString()} t) → collapse</li>
-        </ul>
-        <p><em>1 ship; ends on the same side.</em></p>`;
-      }
+  // 3) otherwise build candidates for Battleship, Cruiser, HIC
+  const candidates = [];
+  for (const [type, m] of Object.entries(JumpMass)) {
+    if (m.cold <= maxIndividual && m.hot <= maxIndividual) {
+      // how many *return* (hot) jumps to exceed threshold?
+      const trips = Math.ceil(threshold / m.hot);
+      candidates.push({ type, trips });
     }
   }
+  if (!candidates.length) return null;
 
-  // 3) STABLE
-  else {
-    const key  = getClassKey();
-    const plan = STABLE_PLANS[key];
-    if (!plan) {
-      html += `<p>⚠️ No Stable-state logic defined for this class.</p>`;
-    } else {
-      html += `<h4>${plan.title}</h4>`;
-
-      // Initial Check
-      html += `<h4>Initial Check</h4><ul>`;
-      plan.initial.forEach(j => {
-        const ship = getBestShipForJump(j.m);
-        if (ship) {
-          html += `<li>${j.c} ${j.m.charAt(0).toUpperCase()+j.m.slice(1)} Jump${j.c>1?'s':''}
-                   (${ship.type}, ${ship.mass.toLocaleString()} t each)</li>`;
-        } else {
-          html += `<li>⚠️ No ship can make a ${j.m} jump (limit ${maxIndMass.toLocaleString()} t)</li>`;
-        }
-      });
-      html += `<li>🔍 Ask: Is the hole reduced?</li></ul>`;
-
-      // If YES
-      html += `<h4>If YES</h4><ul>`;
-      plan.yes.roll.forEach(j => {
-        const ship = getBestShipForJump(j.m);
-        html += ship
-          ? `<li>To Roll: ${j.c} ${j.m.toUpperCase()} Jump${j.c>1?'s':''} (${ship.type}, ${ship.mass.toLocaleString()} t each)</li>`
-          : `<li>⚠️ No ship can Roll with ${j.m} jumps</li>`;
-      });
-      plan.yes.crit.forEach(j => {
-        const ship = getBestShipForJump(j.m);
-        html += ship
-          ? `<li>To Crit: ${j.c} ${j.m.toUpperCase()} Jump${j.c>1?'s':''} (${ship.type}, ${ship.mass.toLocaleString()} t each)</li>`
-          : `<li>⚠️ No ship can Crit with ${j.m} jumps</li>`;
-      });
-      html += `</ul>`;
-
-      // If NO
-      html += `<h4>If NO</h4><ul>`;
-      plan.no.roll.forEach(j => {
-        const ship = getBestShipForJump(j.m);
-        html += ship
-          ? `<li>To Roll: ${j.c} ${j.m.toUpperCase()} Jump${j.c>1?'s':''} (${ship.type}, ${ship.mass.toLocaleString()} t each)</li>`
-          : `<li>⚠️ No ship can Roll with ${j.m} jumps</li>`;
-      });
-      plan.no.crit.forEach(j => {
-        const ship = getBestShipForJump(j.m);
-        html += ship
-          ? `<li>To Crit: ${j.c} ${j.m.toUpperCase()} Jump${j.c>1?'s':''} (${ship.type}, ${ship.mass.toLocaleString()} t each)</li>`
-          : `<li>⚠️ No ship can Crit with ${j.m} jumps</li>`;
-      });
-      html += `</ul><p><em>All ships end on the same side.</em></p>`;
-    }
-  }
-
-  html += `</div>`;
-  out.innerHTML = html;
+  // 4) pick the candidate with fewest trips
+  candidates.sort((a,b)=>a.trips-b.trips);
+  return { shipType:candidates[0].type, trips:candidates[0].trips, threshold };
 }
 
-// Kick things off
+function generatePlan() {
+  const typeVal  = document.getElementById('wormhole-type').value;
+  const status   = document.getElementById('wormhole-status').value;
+  const outputEl = document.getElementById('plan-output');
+
+  outputEl.innerHTML = ''; // clear
+
+  if (!typeVal) {
+    outputEl.textContent = '❗ Please select a wormhole type.';
+    return;
+  }
+
+  // find wormhole record
+  const w = wormholes.find(w => w.type === typeVal);
+  if (!w) {
+    outputEl.textContent = '❗ Invalid wormhole selected.';
+    return;
+  }
+
+  const { totalMass, maxIndividualMass } = w;
+  const plan = calculateOptimalCollapse(totalMass, maxIndividualMass, status);
+
+  // no valid plan?
+  if (!plan) {
+    outputEl.innerHTML = `
+      <div class="plan-box warning">
+        ⚠️ No safe collapse plan: no ship can perform a full cold→hot round‐trip under the 
+        max individual limit of ${maxIndividualMass.toLocaleString()} t.
+      </div>`;
+    return;
+  }
+
+  // render the plan
+  const { shipType, trips, threshold } = plan;
+  const coldMass = JumpMass[shipType].cold;
+  const hotMass  = JumpMass[shipType].hot;
+
+  outputEl.innerHTML = `
+    <div class="plan-box">
+      <h3>${typeVal} — ${status.toUpperCase()}</h3>
+      <ul>
+        <li><strong>Ship Type:</strong> ${shipType}</li>
+        <li><strong>Worst‐case Remaining:</strong> ~${Math.ceil(threshold).toLocaleString()} t</li>
+        <li><strong>Cold Jump Mass:</strong> ${coldMass.toLocaleString()} t</li>
+        <li><strong>Hot Jump Mass:</strong> ${hotMass.toLocaleString()} t</li>
+        <li><strong>Round‐Trips Needed:</strong> ${trips}</li>
+      </ul>
+      <p>
+        Execute <strong>${trips}</strong> cold <em>IN</em> jumps 
+        followed by <strong>${trips}</strong> hot <em>OUT</em> jumps with your 
+        ${shipType}. This will collapse the hole and leave all ships on the 
+        original side.
+      </p>
+    </div>`;
+}
+
 init();
