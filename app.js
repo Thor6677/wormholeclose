@@ -7,10 +7,18 @@ window.onload = () => {
   wormholes.forEach(wh => {
     const opt = document.createElement('option');
     opt.value = wh.type;
-    opt.textContent = `${wh.type} – ${wh.from || '?'} → ${wh.to}`;
+    opt.textContent = `${wh.type} – ${wh.from || '?'} → ${wh.to || '?'}`;
     select.appendChild(opt);
   });
 };
+
+function getColorCodeByMass(mass) {
+  if (mass >= 3_300_000_000) return 'orange';
+  if (mass >= 3_000_000_000) return 'yellow';
+  if (mass >= 2_000_000_000) return 'green';
+  if (mass >= 1_000_000_000) return 'blue';
+  return 'unknown';
+}
 
 window.updateWormholeMass = function () {
   const type = document.getElementById('wormhole-type').value;
@@ -21,40 +29,99 @@ window.updateWormholeMass = function () {
   document.getElementById('remaining-mass').value = wh.totalMass;
 };
 
-window.logJump = function () {
-  const shipMass = parseInt(document.getElementById('ship-mass').value, 10);
-  const maxMass = parseInt(document.getElementById('max-mass').value, 10);
-  const remainingMassInput = document.getElementById('remaining-mass');
-  let remainingMass = parseInt(remainingMassInput.value, 10);
+window.generateRollPlan = function () {
+  const type = document.getElementById('wormhole-type').value;
+  const status = document.getElementById('wormhole-status').value;
+  const wh = wormholes.find(w => w.type === type);
 
-  if (isNaN(shipMass) || isNaN(maxMass)) {
-    alert('Please enter valid numbers for ship mass and max wormhole mass.');
+  const output = document.getElementById('plan-output');
+  if (!wh) {
+    output.innerHTML = `<p>Please select a valid wormhole type.</p>`;
     return;
   }
 
-  totalMass += shipMass;
-  remainingMass -= shipMass;
-  remainingMassInput.value = remainingMass;
+  const colorCode = getColorCodeByMass(wh.totalMass || 0);
 
-  const li = document.createElement('li');
-  li.textContent = `Jumped: ${shipMass.toLocaleString()} kg | Remaining: ${remainingMass.toLocaleString()} kg`;
-  document.getElementById('jump-log').appendChild(li);
+  let intro = `<strong>Wormhole Type:</strong> ${type} (${wh.totalMass.toLocaleString()}kg)<br>`;
+  intro += `<strong>Status:</strong> ${status.charAt(0).toUpperCase() + status.slice(1)}<br><br>`;
+  
+  const cold = 200_000_000; // 200M kg
+  const hot = 300_000_000;  // 300M kg
 
-  updateStatus(remainingMass, maxMass);
-};
+  let plan = '';
 
-function updateStatus(remaining, max) {
-  const statusText = document.getElementById('status-text');
-  const percent = (remaining / max) * 100;
+  switch (colorCode) {
+    case 'orange':
+      if (status === 'stable') {
+        plan = `
+          🔸 Jump 5 Hot, 1 Cold<br>
+          🔍 Check if status is reduced (Unstable)<br><br>
+          If <strong>Still Stable</strong>:<br>
+          ➤ Return 6 Hot to collapse<br><br>
+          If <strong>Now Unstable</strong>:<br>
+          ➤ Return 2 Cold, 4 Hot to collapse
+        `;
+      } else if (status === 'unstable') {
+        plan = `
+          ➤ Jump 2 Cold, 4 Hot through<br>
+          ➤ Collapse from other side with same mass (2 Cold, 4 Hot)<br>
+        `;
+      } else if (status === 'critical') {
+        plan = `
+          ❗ Use 1 Hot ship at a time<br>
+          🧍 Have a HIC (Heavy Interdictor) ready if needed<br>
+          ➤ Jump 1 Hot ship repeatedly until collapse
+        `;
+      }
+      break;
 
-  if (percent > 75) {
-    statusText.textContent = "Stable – Plenty of mass remaining.";
-    statusText.style.color = "lightgreen";
-  } else if (percent > 25) {
-    statusText.textContent = "Caution – Wormhole weakening.";
-    statusText.style.color = "gold";
-  } else {
-    statusText.textContent = "Danger – Collapse imminent!";
-    statusText.style.color = "red";
+    case 'yellow':
+      if (status === 'stable') {
+        plan = `
+          🔸 Jump 5 Hot<br>
+          🔍 Check if status is reduced<br><br>
+          If <strong>Still Stable</strong>:<br>
+          ➤ Return 5 Hot<br><br>
+          If <strong>Unstable</strong>:<br>
+          ➤ Return 1 Cold, 4 Hot
+        `;
+      } else if (status === 'unstable') {
+        plan = `
+          ➤ Jump 1 Cold, 4 Hot through<br>
+          ➤ Collapse with return jump (same config)
+        `;
+      } else {
+        plan = `
+          ⚠️ Use Hot jumps carefully<br>
+          ➤ Return Hot jumps one by one until collapse<br>
+          🧍 HIC mass may be needed
+        `;
+      }
+      break;
+
+    case 'green':
+      plan = `
+        ➤ Jump 2 Cold, 2 Hot<br>
+        🔍 Check status<br>
+        ➤ Repeat up to 4 total jumps<br>
+        ➤ Match cold/hot on return based on updated state
+      `;
+      break;
+
+    case 'blue':
+      plan = `
+        ➤ Jump 1 Cold, 1 Hot<br>
+        🔍 Check status<br><br>
+        If <strong>Still Stable</strong>:<br>
+        ➤ 2 Hot return jumps<br><br>
+        If <strong>Unstable</strong>:<br>
+        ➤ 1 Cold, 1 Hot return
+      `;
+      break;
+
+    default:
+      plan = `No plan available for this wormhole type.`;
   }
-}
+
+  output.innerHTML = `${intro}<div class="plan-box">${plan}</div>`;
+};
