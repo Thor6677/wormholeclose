@@ -1,7 +1,5 @@
 import { wormholes } from './data/wormholes.js';
 
-let totalMass = 0;
-
 window.onload = () => {
   const select = document.getElementById('wormhole-type');
   wormholes.forEach(wh => {
@@ -32,7 +30,7 @@ window.updateWormholeMass = function () {
 window.generateRollPlan = function () {
   const type = document.getElementById('wormhole-type').value;
   const status = document.getElementById('wormhole-status').value;
-  const endSide = document.getElementById('end-side').value; // "same" or "other"
+  const endSide = document.getElementById('end-side').value;
   const wh = wormholes.find(w => w.type === type);
   const output = document.getElementById('plan-output');
 
@@ -49,113 +47,110 @@ window.generateRollPlan = function () {
   let plan = '';
   const BS = 'Battleship (BS)';
   const Cru = 'Cruiser';
-  const hic = 'HIC';
+  const hic = 'HIC (Heavy Interdictor)';
 
-  if (status === 'unstable') {
+  // CRITICAL
+  if (status === 'critical') {
     plan = `
-      ⚠️ The wormhole is <strong>Unstable</strong> (50–10%).<br><br>
-      Suggested Ships: <strong>${BS}</strong> or <strong>${Cru}</strong><br><br>
-      ✅ <strong>Safe Rolling Guide:</strong><br>
-      ➤ Jump <strong>2 Cold + 2 Hot</strong> in pairs<br>
-      ➤ Check status again<br><br>
-      If still unstable:<br>
-      ➤ Return <strong>2 Cold + 2 Hot</strong> to collapse on current side.<br>
-      ➤ If ending on <strong>opposite</strong> side, finish with <strong>1 Hot</strong> or <strong>1 Cold</strong> as needed.<br><br>
-      ❗ If you end in Critical, switch to HIC-based closure.
+      🔴 <strong>Critical (<10%)</strong><br><br>
+      Suggested Ship: <strong>${hic}</strong><br>
+      ➤ Use 1 Cold jump at a time.<br>
+      ➤ Avoid Hot jumps unless you're collapsing intentionally.<br>
+      ➤ Scout both sides. Use d-scan or backup scanner.<br>
+      ➤ <em>Same Side:</em> Repeat Cold jumps until collapse.<br>
+      ➤ <em>Opposite Side:</em> Hot jump from current side, then second Hot after 60s.<br>
     `;
   }
-  else if (status === 'critical') {
+
+  // UNSTABLE
+  else if (status === 'unstable') {
     plan = `
-      🔴 <strong>CRITICAL STATE</strong> (<10%) — high collapse risk.<br><br>
-      Suggested Ships: <strong>${hic}</strong> or small frigate due to fine control.<br><br>
-      ➤ Jump <strong>1 Cold ship (HIC)</strong><br>
-      ➤ If ending on same side, repeat <strong>1 Cold</strong> until collapse occurs.<br>
-      ➤ If ending on opposite, after Cold-jump check scanners.<br><br>
-      🧭 <u>Alternative (intentional collapse from far side):</u><br>
-      ➤ Jump 1 Hot <strong>from your side</strong>, wait 60s, then repeat.<br><br>
-      👉 Always scan carefully to confirm side and collapse.
+      ⚠️ <strong>Unstable (50–10%)</strong><br><br>
+      Suggested Ships: <strong>${BS}</strong> or <strong>${Cru}</strong><br>
+      ➤ Jump 2 Cold + 2 Hot through.<br>
+      ➤ Check WH status after each pair.<br>
+      ➤ <em>Same Side:</em> Return 2 Cold + 2 Hot.<br>
+      ➤ <em>Opposite Side:</em> Add final Hot jump from your side.<br>
     `;
   }
+
+  // STABLE
   else {
     switch (colorCode) {
       case 'blue':
         plan = `
-          🎯 <strong>Initial Check:</strong><br>
-          ➤ 1 Cold + 1 Hot jump (use ${BS})<br>
-          🔍 Ask: "Is hole reduced?"<br><br>
+          🟦 <strong>Stable (1000G)</strong><br>
+          ➤ Jump 1 Cold + 1 Hot (${BS})<br>
+          🔍 Check if reduced<br><br>
 
-          <strong>If YES:</strong><br>
-          ➤ <em>To Roll:</em> 2 Hot jumps<br>
-          ➤ <em>To Crit:</em> 2 Cold jumps<br><br>
+          If YES:<br>
+          ➤ Roll: 2 Hot<br>
+          ➤ Crit: 2 Cold<br><br>
 
-          <strong>If NO:</strong><br>
-          ➤ <em>To Roll:</em> 2 Hot jumps<br>
-          ➤ <em>To Crit:</em> 1 Cold + 1 Hot jump<br><br>
+          If NO:<br>
+          ➤ Roll: 2 Hot<br>
+          ➤ Crit: 1 Cold + 1 Hot<br><br>
 
-          ➤ If ending on the opposite side, finish with 1 extra Hot jump.
+          ➤ <em>${endSide === 'same' ? 'Ensure all ships return in same configuration' : 'Add extra Hot to land opposite'}</em>
         `;
         break;
 
       case 'green':
         plan = `
-          🎯 <strong>Initial Check:</strong><br>
-          ➤ 2 Cold + 2 Hot (${BS})<br>
-          🔍 Ask: "Is hole reduced?"<br><br>
+          🟩 <strong>Stable (2000G)</strong><br>
+          ➤ Jump 2 Cold + 2 Hot<br>
+          🔍 Check if reduced<br><br>
 
-          <strong>If YES:</strong><br>
-          ➤ <em>To Roll:</em> 2 Cold + 2 Hot<br>
-          ➤ <em>To Crit:</em> 4 Cold<br><br>
+          If YES:<br>
+          ➤ Roll: 2 Cold + 2 Hot<br>
+          ➤ Crit: 4 Cold<br><br>
 
-          <strong>If NO:</strong><br>
-          ➤ <em>To Roll:</em> 4 Hot<br>
-          ➤ <em>To Crit:</em> 2 Cold + 2 Hot<br><br>
+          If NO:<br>
+          ➤ Roll: 4 Hot<br>
+          ➤ Crit: 2 Cold + 2 Hot<br><br>
 
-          ➤ Ending opposite side? Add Hot after rolling step.
+          ➤ <em>${endSide === 'same' ? 'Match return jumps' : 'Add 1 Hot to finish'}</em>
         `;
         break;
 
       case 'yellow':
         plan = `
-          🎯 <strong>Initial Check:</strong><br>
-          ➤ 5 Hot (${BS})<br>
-          🔍 Ask: "Is hole reduced?"<br><br>
+          🟨 <strong>Stable (3000G)</strong><br>
+          ➤ Jump 5 Hot<br>
+          🔍 Check if reduced<br><br>
 
-          <strong>If YES:</strong><br>
-          ➤ <em>To Roll:</em> Return Hot + 4 Hot<br>
-          ➤ <em>To Crit:</em> Return Hot + Cold + 2 Hot<br><br>
+          If YES:<br>
+          ➤ Roll: Return Hot + 4 Hot<br>
+          ➤ Crit: Return Hot + Cold + 2 Hot<br><br>
 
-          <strong>If NO:</strong><br>
-          ➤ <em>To Roll:</em> Return Hot + 5 Hot<br>
-          ➤ <em>To Crit:</em> Return Hot + Cold + 3 Hot<br><br>
+          If NO:<br>
+          ➤ Roll: Return Hot + 5 Hot<br>
+          ➤ Crit: Return Hot + Cold + 3 Hot<br><br>
 
-          ➤ Use HIC (cold) at Crit for safe collapse.<br>
-          ➤ Ending opposite side? Finish with Hot.
+          ➤ <em>${endSide === 'same' ? 'Use HIC for final tweak' : 'Final Hot jump to land opposite'}</em>
         `;
         break;
 
       case 'orange':
         plan = `
-          🎯 <strong>Initial Check:</strong><br>
-          ➤ 1 Cold + 5 Hot (${BS})<br>
-          🔍 Ask: "Is hole reduced?"<br><br>
+          🟧 <strong>Stable (3300G)</strong><br>
+          ➤ Jump 1 Cold + 5 Hot<br>
+          🔍 Check if reduced<br><br>
 
-          <strong>If YES:</strong><br>
-          ➤ <em>To Roll:</em> 2 Cold + 4 Hot (use ${hic} if needed)<br>
-          ➤ <em>To Crit:</em> 4 Hot + optional ${hic}<br><br>
+          If YES:<br>
+          ➤ Roll: 2 Cold + 4 Hot<br>
+          ➤ Crit: 4 Hot + HIC<br><br>
 
-          <strong>If NO:</strong><br>
-          ➤ <em>To Roll:</em> 6 Hot (+ ${hic} optional)<br>
-          ➤ <em>To Crit:</em> Cold + 5 Hot<br><br>
+          If NO:<br>
+          ➤ Roll: 6 Hot<br>
+          ➤ Crit: Cold + 5 Hot<br><br>
 
-          ➤ For Crit closures, recommended: 1 Cold (HIC) + 5 Hot.<br>
-          ➤ Ending on opposite — finish with 1 Hot jump.
+          ➤ <em>${endSide === 'same' ? 'HIC advised on return' : 'Add Hot jump on far side'}</em>
         `;
         break;
 
       default:
-        plan = `
-          ⚠️ No rolling strategy available for this wormhole mass category.
-        `;
+        plan = `<p>⚠️ No rolling logic defined for this wormhole class.</p>`;
     }
   }
 
