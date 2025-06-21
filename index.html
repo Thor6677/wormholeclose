@@ -1,259 +1,50 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <title>W-Space Wormhole Closer</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <style>
-    body { font-family: Arial, sans-serif; margin: 1rem; max-width: 600px; }
-    h1, h2 { text-align: center; }
-    .step { display: none; }
-    .step.active { display: block; }
-    .wizard-nav { margin-top: 1.5rem; display: flex; justify-content: space-between; }
-    button { padding: .5rem 1rem; }
-    #suggestions { border: 1px solid #ccc; max-height: 150px; overflow-y: auto; margin-top: .5rem; }
-    .suggestion { padding: .5rem; cursor: pointer; }
-    .suggestion:hover { background: #eee; }
-    pre { background: #f9f9f9; padding: 1rem; white-space: pre-wrap; }
-    @media (max-width: 480px) {
-      button { flex: 1; margin: .25rem 0; }
-      .wizard-nav { flex-direction: column-reverse; }
-    }
-  </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Wormhole Roller – EVE Online Tool</title>
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
+  <div class="container">
+    <h1>Wormhole Roller Tool</h1>
 
-  <h1>W-Space Wormhole Closer</h1>
-  
-  <!-- Step 1: Select Wormhole -->
-  <div id="step-1" class="step active">
-    <h2>Step 1: Choose Wormhole</h2>
-    <input type="text" id="wh-search" placeholder="Type wormhole code…" autocomplete="off" />
-    <div id="suggestions"></div>
-    <div id="wh-details"></div>
-  </div>
-  
-  <!-- Step 2: State & Goal -->
-  <div id="step-2" class="step">
-    <h2>Step 2: State &amp; Goal</h2>
-    <label>
-      Current Status:
-      <select id="status-select">
-        <option value="stable">Stable (100→50%)</option>
-        <option value="unstable">Unstable (50→10%)</option>
-        <option value="critical">Critical (10→0%)</option>
-      </select>
-    </label>
-    <br><br>
-    <label>
-      Goal:
-      <select id="goal-select">
-        <option value="close">Close (0%)</option>
-        <option value="crit">Crit (10%)</option>
-      </select>
-    </label>
-  </div>
+    <section class="wormhole-settings">
+      <h2>Wormhole Parameters</h2>
+      
+      <label>Wormhole Type:
+        <select id="wormhole-type" onchange="updateWormholeMass()">
+          <option value="">-- Select Wormhole Type --</option>
+        </select>
+      </label>
 
-  <!-- Step 3: Enter Ship Mass -->
-  <div id="step-3" class="step">
-    <h2>Step 3: Enter Ship Mass</h2>
-    <label>
-      Cold Mass (kg):
-      <input type="number" id="cold-mass" placeholder="e.g. 1650000" />
-    </label>
-    <br><br>
-    <label>
-      Hot Mass (kg):
-      <input type="number" id="hot-mass" placeholder="e.g. 2475000" />
-    </label>
+      <label>Maximum Mass:
+        <input type="number" id="max-mass" placeholder="e.g. 2,000,000,000 kg" />
+      </label>
+
+      <label>Current Estimated Mass Remaining:
+        <input type="number" id="remaining-mass" placeholder="e.g. 1,800,000,000 kg" />
+      </label>
+    </section>
+
+    <section class="ship-jumps">
+      <h2>Ship Jump Tracker</h2>
+      
+      <label>Ship Mass (kg):
+        <input type="number" id="ship-mass" placeholder="e.g. 300,000,000" />
+      </label>
+      
+      <button onclick="logJump()">Log Jump</button>
+      <ul id="jump-log"></ul>
+    </section>
+
+    <section class="status">
+      <h2>Status</h2>
+      <p id="status-text">Waiting for data...</p>
+    </section>
   </div>
 
-  <!-- Step 4: Initial Jump Plan -->
-  <div id="step-4" class="step">
-    <h2>Step 4: Initial Jump</h2>
-    <p id="initial-summary"></p>
-    <pre id="initial-steps"></pre>
-  </div>
-
-  <!-- Step 5: Return Jump (Interactive) -->
-  <div id="step-5" class="step">
-    <h2>Step 5: Return Jump</h2>
-    <p>Select the hole’s observed state after your initial jump:</p>
-    <label>
-      Hole State:
-      <select id="return-state">
-        <option value="stable">Stable (50–100%)</option>
-        <option value="unstable">Unstable (10–50%)</option>
-        <option value="critical">Critical (0–10%)</option>
-      </select>
-    </label>
-    <div id="return-suggestion" style="margin-top:1rem;"></div>
-  </div>
-
-  <!-- Wizard Navigation -->
-  <div class="wizard-nav">
-    <button id="btn-reset">Reset</button>
-    <div>
-      <button id="btn-back" disabled>Back</button>
-      <button id="btn-next">Next</button>
-    </div>
-  </div>
-
-  <script type="module">
-    import { wormholes } from './data/wormholes.js';
-
-    let currentStep = 1;
-    let currentWH = null;
-    let startMass = 0, goalMass = 0;
-    let shipCount = 0, remAfterInit = 0;
-    let retClose = {}, retCrit = {};
-
-    const steps            = {
-      1: document.getElementById('step-1'),
-      2: document.getElementById('step-2'),
-      3: document.getElementById('step-3'),
-      4: document.getElementById('step-4'),
-      5: document.getElementById('step-5'),
-    };
-    const btnNext          = document.getElementById('btn-next');
-    const btnBack          = document.getElementById('btn-back');
-    const btnReset         = document.getElementById('btn-reset');
-    const whSearch         = document.getElementById('wh-search');
-    const suggestions      = document.getElementById('suggestions');
-    const whDetails        = document.getElementById('wh-details');
-    const statusSelect     = document.getElementById('status-select');
-    const goalSelect       = document.getElementById('goal-select');
-    const coldInput        = document.getElementById('cold-mass');
-    const hotInput         = document.getElementById('hot-mass');
-    const initialSummary   = document.getElementById('initial-summary');
-    const initialSteps     = document.getElementById('initial-steps');
-    const returnState      = document.getElementById('return-state');
-    const returnSuggestion = document.getElementById('return-suggestion');
-
-    function showStep(n) {
-      Object.values(steps).forEach(el => el.classList.remove('active'));
-      steps[n].classList.add('active');
-      btnBack.disabled = (n === 1);
-      btnNext.textContent = n === 5 ? 'Finish' : 'Next';
-      if (n === 5) drawReturnSuggestion();
-    }
-
-    btnReset.onclick = () => {
-      currentStep = 1; currentWH = null;
-      startMass = goalMass = 0;
-      shipCount = remAfterInit = 0;
-      retClose = retCrit = {};
-      whSearch.value = '';
-      suggestions.innerHTML = '';
-      whDetails.innerHTML = '';
-      coldInput.value = '';
-      hotInput.value = '';
-      initialSummary.textContent = '';
-      initialSteps.textContent = '';
-      returnSuggestion.innerHTML = '';
-      showStep(1);
-    };
-
-    btnBack.onclick = () => { if (currentStep > 1) showStep(--currentStep); };
-
-    btnNext.onclick = () => {
-      if (currentStep === 1 && !currentWH) { alert('Please select a wormhole.'); return; }
-      if (currentStep === 2) {
-        const pct = { stable:1, unstable:0.5, critical:0.1 }[statusSelect.value];
-        startMass = Math.round(currentWH.totalMass * pct);
-        goalMass  = goalSelect.value === 'close' ? 0 : Math.round(currentWH.totalMass * 0.1);
-      }
-      if (currentStep === 3) {
-        if (!coldInput.value || !hotInput.value) { alert('Enter both cold & hot mass.'); return; }
-        buildInitialPlan();
-      }
-      if (currentStep === 4) {
-        prepareReturnData();
-        drawReturnSuggestion();
-      }
-      if (currentStep < 5) showStep(++currentStep);
-      else alert('Done! Reset to try again.');
-    };
-
-    whSearch.oninput = () => {
-      const q = whSearch.value.trim().toUpperCase();
-      suggestions.innerHTML = ''; whDetails.innerHTML = ''; currentWH = null;
-      if (!q) return;
-      wormholes.filter(w => w.type.startsWith(q)).slice(0,8)
-        .forEach(w => {
-          const d = document.createElement('div');
-          d.className = 'suggestion';
-          d.textContent = w.type;
-          d.onclick = () => selectWormhole(w);
-          suggestions.appendChild(d);
-        });
-    };
-
-    function selectWormhole(w) {
-      currentWH = {...w};
-      whSearch.value = w.type;
-      suggestions.innerHTML = '';
-      let html = `<strong>${w.type}</strong><ul>
-        <li>From: ${w.from||'—'}</li>
-        <li>To: ${w.to}</li>
-        <li>Total Mass: ${w.totalMass.toLocaleString()}</li>
-        <li>Max Jump Mass: ${w.maxIndividualMass.toLocaleString()}</li>
-        <li>Class: ${w.classification}</li>
-        <li>Max Stable Time: ${w.maxStableTime} h</li>`;
-      if (w.massRegeneration) html += `<li>Regen: ${w.massRegeneration.toLocaleString()}/s</li>`;
-      html += `</ul>`;
-      whDetails.innerHTML = html;
-    }
-
-    function buildInitialPlan() {
-      const cold = parseInt(coldInput.value,10), hot = parseInt(hotInput.value,10);
-      const total = currentWH.totalMass, maxInd = currentWH.maxIndividualMass, status = statusSelect.value;
-      let nextTh;
-      if (status==='stable') nextTh=total*0.5; else if (status==='unstable') nextTh=total*0.1; else nextTh=goalMass;
-      const req = Math.max(0, startMass-nextTh)+1;
-      if (cold>maxInd||hot>maxInd){ alert(`Ship mass exceeds hole max.`); return; }
-      let best=null;
-      for(let N=1;N<=20;N++){
-        for(let h=0;h<=N;h++){ const c=N-h, moved=h*hot+c*cold; if(moved>=req && (!best||N<best.N||(N===best.N&&moved<best.moved))) best={N,coldCount:c,hotCount:h,moved}; }
-        if(best)break;
-      }
-      if(!best){ const p=[{c:0,h:1,m:hot},{c:1,h:0,m:cold}].sort((a,b)=>b.m-a.m)[0]; const ships=Math.ceil(req/p.m); best={N:ships,coldCount:p.c*ships,hotCount:p.h*ships,moved:p.m*ships}; }
-      shipCount=best.N; remAfterInit=startMass-best.moved;
-      initialSummary.textContent=`Use ${shipCount} ships: ${best.coldCount} cold & ${best.hotCount} hot.`;
-      initialSteps.textContent=[
-        `Start: ${startMass.toLocaleString()} kg`,
-        `Move:  ${best.moved.toLocaleString()} kg`,
-        `Remain:${remAfterInit.toLocaleString()} kg`
-      ].join('\n');
-    }
-
-    function prepareReturnData(){
-      const cold=parseInt(coldInput.value,10), hot=parseInt(hotInput.value,10);
-      const total=currentWH.totalMass, th10=Math.round(total*0.1);
-      retClose=computeReturn(remAfterInit-0); retCrit=computeReturn(remAfterInit-th10);
-    }
-
-    function computeReturn(diff){
-      const cold=parseInt(coldInput.value,10), hot=parseInt(hotInput.value,10);
-      for(let h=0;h<=shipCount;h++){ const c=shipCount-h; if(h*hot+c*cold>=diff) return {cold:c,hot:h}; }
-      return {cold:0,hot:shipCount};
-    }
-
-    returnState.addEventListener('change', drawReturnSuggestion);
-    function drawReturnSuggestion(){
-      const st=returnState.value;
-      const closeInfo=passable(retClose), critInfo=passable(retCrit);
-      returnSuggestion.innerHTML=`
-        <p><strong>If ${st.charAt(0).toUpperCase()+st.slice(1)}:</strong></p>
-        <p>To Close: ${retClose.cold} cold & ${retClose.hot} hot${closeInfo.stranded?` → ${closeInfo.stranded} stranded`:''}</p>
-        <p>To Crit:  ${retCrit.cold} cold & ${retCrit.hot} hot${critInfo.stranded?` → ${critInfo.stranded} stranded`:''}</p>
-      `;
-    }
-
-    function passable(plan){ if(remAfterInit<=0) return {stranded:0}; let rem=remAfterInit; const cold=parseInt(coldInput.value,10), hot=parseInt(hotInput.value,10); const hPass=Math.min(plan.hot,Math.floor(rem/hot)); rem-=hPass*hot; const cPass=Math.min(plan.cold,Math.floor(rem/cold)); const stranded=shipCount-(hPass+cPass); return {stranded}; }
-
-    showStep(1);
-  </script>
-
+  <script type="module" src="app.js"></script>
 </body>
 </html>
