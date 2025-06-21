@@ -1,23 +1,23 @@
 import { wormholes } from './data/wormholes.js';
 
 // ──────────────────────────────────────────
-//   JUMP MASSES (all in same kg unit as JSON)
+//   JUMP MASSES (all in tonnes, to match JSON)
 // ──────────────────────────────────────────
-const BS_COLD   = 200_000;    // Battleship cold jump ~200 000 kg
-const BS_HOT    = 300_000;    // Battleship hot jump  ~300 000 kg
-const CR_COLD   =  36_000;    // Cruiser cold jump   ~36 000 kg
-const CR_HOT    = 126_000;    // Cruiser hot jump    ~126 000 kg
-const HIC_COLD  =     830;    // HIC cold jump        ~830 kg (entangled)
-const HIC_HOT   = 132_400;    // HIC hot jump      ~132 400 kg
+const BS_COLD_T    = 200_000;   // Battleship cold jump ≃200 000 t
+const BS_HOT_T     = 300_000;   // Battleship hot jump  ≃300 000 t
+const CR_COLD_T    =  36_000;   // Cruiser cold jump   ≃36 000 t
+const CR_HOT_T     = 126_000;   // Cruiser hot jump    ≃126 000 t
+const HIC_COLD_T   =     830;   // HIC cold w/entangle  830 t
+const HIC_HOT_T    = 132_400;   // HIC hot jump       132 400 t
 
-let maxMass       = 0;
-let maxIndMass    = 0;
+let maxMass_t    = 0;  // totalMass in t
+let maxIndMass_t = 0;  // maxIndividualMass in t
 
 function init() {
   const typeSel  = document.getElementById('wormhole-type');
   const genBtn   = document.getElementById('generate-btn');
 
-  // Populate wormhole dropdown
+  // Populate dropdown
   wormholes.forEach(w => {
     const o = document.createElement('option');
     o.value = w.type;
@@ -25,40 +25,40 @@ function init() {
     typeSel.append(o);
   });
 
-  // When you pick a type, stash its mass limits
+  // Store the selected wormhole’s mass (in tonnes)
   typeSel.addEventListener('change', () => {
     const w = wormholes.find(x => x.type === typeSel.value);
     if (w) {
-      maxMass    = w.totalMass;
-      maxIndMass = w.maxIndividualMass;
+      maxMass_t = w.totalMass;          // already in t
+      maxIndMass_t = w.maxIndividualMass; // in t
     } else {
-      maxMass = maxIndMass = 0;
+      maxMass_t = maxIndMass_t = 0;
     }
   });
 
   genBtn.addEventListener('click', generatePlan);
 }
 
-// Pick the largest ship that can fit under maxIndividualMass
+// Pick the largest ship whose jump‐mass (tonnes) ≤ maxIndMass_t
 function getShipForJump(kind /* 'cold'|'hot' */) {
   if (kind === 'cold') {
-    if (BS_COLD   <= maxIndMass) return { name:'Battleship', mass:BS_COLD };
-    if (CR_COLD   <= maxIndMass) return { name:'Cruiser',    mass:CR_COLD };
-    if (HIC_COLD  <= maxIndMass) return { name:'HIC',        mass:HIC_COLD };
+    if (BS_COLD_T   <= maxIndMass_t) return { name:'Battleship', mass:BS_COLD_T };
+    if (CR_COLD_T   <= maxIndMass_t) return { name:'Cruiser',    mass:CR_COLD_T };
+    if (HIC_COLD_T  <= maxIndMass_t) return { name:'HIC',        mass:HIC_COLD_T };
   } else {
-    if (BS_HOT    <= maxIndMass) return { name:'Battleship', mass:BS_HOT };
-    if (CR_HOT    <= maxIndMass) return { name:'Cruiser',    mass:CR_HOT };
-    if (HIC_HOT   <= maxIndMass) return { name:'HIC',        mass:HIC_HOT };
+    if (BS_HOT_T    <= maxIndMass_t) return { name:'Battleship', mass:BS_HOT_T };
+    if (CR_HOT_T    <= maxIndMass_t) return { name:'Cruiser',    mass:CR_HOT_T };
+    if (HIC_HOT_T   <= maxIndMass_t) return { name:'HIC',        mass:HIC_HOT_T };
   }
   return null;
 }
 
-// Classify by the JSON totalMass
+// Classify wormhole by totalMass (tonnes)
 function getColorCode() {
-  if (maxMass >= 3_300_000) return 'orange'; // 3300G
-  if (maxMass >= 3_000_000) return 'yellow'; // 3000G
-  if (maxMass >= 2_000_000) return 'green';  // 2000G
-  if (maxMass >= 1_000_000) return 'blue';   // 1000G
+  if (maxMass_t >= 3_300_000) return 'orange'; // 3300G
+  if (maxMass_t >= 3_000_000) return 'yellow'; // 3000G
+  if (maxMass_t >= 2_000_000) return 'green';  // 2000G
+  if (maxMass_t >= 1_000_000) return 'blue';   // 1000G
   return 'unknown';
 }
 
@@ -72,7 +72,7 @@ function generatePlan() {
     out.textContent = '❗ Please select a wormhole type.';
     return;
   }
-  if (!maxMass || !maxIndMass) {
+  if (!maxMass_t || !maxIndMass_t) {
     out.textContent = '❗ Could not read wormhole mass limits.';
     return;
   }
@@ -81,147 +81,144 @@ function generatePlan() {
   let html = `<div class="plan-box">
     <h3>${type} — ${status.toUpperCase()}</h3>`;
 
-  // ─── CRITICAL
+  // ─── CRITICAL (<10%)
   if (status === 'critical') {
     const inShip  = getShipForJump('cold');
     const outShip = getShipForJump('hot');
     if (!inShip || !outShip) {
-      html += `<p>⚠️ No ship can jump under Critical (<10%) mass limit of ${maxIndMass.toLocaleString()} kg.</p>`;
+      html += `<p>⚠️ No ship fits the max‐individual mass of ${maxIndMass_t.toLocaleString()} t.</p>`;
     } else {
       html += `
-      <h4>Critical (&lt;10%)</h4>
+      <h4>Critical (&lt;10% remaining)</h4>
       <ul>
-        <li>${inShip.name} Cold jump IN (${inShip.mass.toLocaleString()} kg)</li>
-        <li>${outShip.name} Hot jump OUT (${outShip.mass.toLocaleString()} kg) → collapse</li>
+        <li>${inShip.name} Cold <strong>IN</strong> (${inShip.mass.toLocaleString()} t)</li>
+        <li>${outShip.name} Hot <strong>OUT</strong> (${outShip.mass.toLocaleString()} t) → collapse</li>
       </ul>
-      <p><em>Repeat IN→OUT until popped; ends on same side.</em></p>`;
+      <p><em>Repeat until collapsed; all end on same side.</em></p>`;
     }
   }
 
-  // ─── UNSTABLE
+  // ─── UNSTABLE (10–50%)
   else if (status === 'unstable') {
-    const rem = Math.floor(maxMass * 0.11);
-    html += `<h4>Unstable (≈${rem.toLocaleString()} kg remaining)</h4>`;
+    const rem_t = Math.floor(maxMass_t * 0.11);
+    html += `<h4>Unstable (≈${rem_t.toLocaleString()} t remaining)</h4>`;
 
-    // If you can do a BS cold/hot pair under the individual limit, do that:
-    if (BS_COLD <= rem && BS_COLD <= maxIndMass && BS_HOT <= maxIndMass) {
+    // Try BS route if BS fits rem and ind‐mass limit
+    if (BS_COLD_T <= rem_t && BS_COLD_T <= maxIndMass_t && BS_HOT_T <= maxIndMass_t) {
       html += `
       <ul>
-        <li>Battleship Cold jump IN (${BS_COLD.toLocaleString()} kg)</li>
-        <li>Battleship Hot jump OUT (${BS_HOT.toLocaleString()} kg) → collapse</li>
+        <li>Battleship Cold <strong>IN</strong> (${BS_COLD_T.toLocaleString()} t)</li>
+        <li>Battleship Hot <strong>OUT</strong> (${BS_HOT_T.toLocaleString()} t) → collapse</li>
       </ul>
       <p><em>1 ship; ends on same side.</em></p>`;
     }
-    // Otherwise pick the best single‐ship solution (Cruiser→HIC cascade):
     else {
       const inShip  = getShipForJump('cold');
       const outShip = getShipForJump('hot');
       if (!inShip || !outShip) {
-        html += `<p>⚠️ No ship can collapse this Unstable hole under individual limit of ${maxIndMass.toLocaleString()} kg.</p>`;
+        html += `<p>⚠️ No single‐ship solution under max‐individual ${maxIndMass_t.toLocaleString()} t.</p>`;
       } else {
         html += `
         <ul>
-          <li>${inShip.name} Cold jump IN (${inShip.mass.toLocaleString()} kg)</li>
-          <li>${outShip.name} Hot jump OUT (${outShip.mass.toLocaleString()} kg) → collapse</li>
+          <li>${inShip.name} Cold <strong>IN</strong> (${inShip.mass.toLocaleString()} t)</li>
+          <li>${outShip.name} Hot <strong>OUT</strong> (${outShip.mass.toLocaleString()} t) → collapse</li>
         </ul>
         <p><em>1 ship; ends on same side.</em></p>`;
       }
     }
   }
 
-  // ─── STABLE
+  // ─── STABLE (50–100%)
   else {
     switch (color) {
       case 'blue': // 1000G
         html += renderStableBlock(
           '1000G Wormhole',
-          [{ count:1, mode:'Cold',  type:'Battleship', mass:BS_COLD },
-           { count:1, mode:'Hot',   type:'Battleship', mass:BS_HOT }],
-          [{ roll:[2,'Hot','Battleship',BS_HOT], crit:[2,'Cold','Battleship',BS_COLD] }],
-          [{ roll:[2,'Hot','Battleship',BS_HOT], crit:[1,'Cold','Battleship',BS_COLD,1,'Hot','Battleship',BS_HOT] }]
+          [{ count:1, mode:'Cold',  type:'Battleship', mass:BS_COLD_T },
+           { count:1, mode:'Hot',   type:'Battleship', mass:BS_HOT_T }],
+          { roll:[2,'Hot','Battleship',BS_HOT_T], crit:[2,'Cold','Battleship',BS_COLD_T] },
+          { roll:[2,'Hot','Battleship',BS_HOT_T], 
+            crit:[1,'Cold','Battleship',BS_COLD_T,1,'Hot','Battleship',BS_HOT_T] }
         );
         break;
 
       case 'green': // 2000G
         html += renderStableBlock(
           '2000G Wormhole',
-          [{ count:2, mode:'Cold',  type:'Battleship', mass:BS_COLD },
-           { count:2, mode:'Hot',   type:'Battleship', mass:BS_HOT }],
-          [{ roll:[2,'Cold','Battleship',BS_COLD,2,'Hot','Battleship',BS_HOT],
-             crit:[4,'Cold','Battleship',BS_COLD] }],
-          [{ roll:[4,'Hot','Battleship',BS_HOT],
-             crit:[2,'Cold','Battleship',BS_COLD,2,'Hot','Battleship',BS_HOT] }]
+          [{ count:2, mode:'Cold',  type:'Battleship', mass:BS_COLD_T },
+           { count:2, mode:'Hot',   type:'Battleship', mass:BS_HOT_T }],
+          { roll:[2,'Cold','Battleship',BS_COLD_T,2,'Hot','Battleship',BS_HOT_T],
+            crit:[4,'Cold','Battleship',BS_COLD_T] },
+          { roll:[4,'Hot','Battleship',BS_HOT_T],
+            crit:[2,'Cold','Battleship',BS_COLD_T,2,'Hot','Battleship',BS_HOT_T] }
         );
         break;
 
       case 'yellow': // 3000G
         html += renderStableBlock(
           '3000G Wormhole',
-          [{ count:5, mode:'Hot', type:'Battleship', mass:BS_HOT }],
-          [{ roll:[1,'Hot','Battleship',BS_HOT,4,'Hot','Battleship',BS_HOT],
-             crit:[1,'Hot','Battleship',BS_HOT,1,'Cold','Battleship',BS_COLD,2,'Hot','Battleship',BS_HOT] }],
-          [{ roll:[1,'Hot','Battleship',BS_HOT,5,'Hot','Battleship',BS_HOT],
-             crit:[1,'Hot','Battleship',BS_HOT,1,'Cold','Battleship',BS_COLD,3,'Hot','Battleship',BS_HOT] }]
+          [{ count:5, mode:'Hot', type:'Battleship', mass:BS_HOT_T }],
+          { roll:[1,'Hot','Battleship',BS_HOT_T,4,'Hot','Battleship',BS_HOT_T],
+            crit:[1,'Hot','Battleship',BS_HOT_T,1,'Cold','Battleship',BS_COLD_T,2,'Hot','Battleship',BS_HOT_T] },
+          { roll:[1,'Hot','Battleship',BS_HOT_T,5,'Hot','Battleship',BS_HOT_T],
+            crit:[1,'Hot','Battleship',BS_HOT_T,1,'Cold','Battleship',BS_COLD_T,3,'Hot','Battleship',BS_HOT_T] }
         );
         break;
 
       case 'orange': // 3300G
         html += renderStableBlock(
           '3300G Wormhole',
-          [{ count:1, mode:'Cold',  type:'Battleship', mass:BS_COLD },
-           { count:5, mode:'Hot',   type:'Battleship', mass:BS_HOT }],
-          [{ roll:[2,'Cold','Battleship',BS_COLD,4,'Hot','Battleship',BS_HOT],
-             crit:[4,'Hot','Battleship',BS_HOT,1,'Cold','HIC',HIC_COLD] }],
-          [{ roll:[6,'Hot','Battleship',BS_HOT],
-             crit:[1,'Cold','Battleship',BS_COLD,5,'Hot','Battleship',BS_HOT] }]
+          [{ count:1, mode:'Cold',  type:'Battleship', mass:BS_COLD_T },
+           { count:5, mode:'Hot',   type:'Battleship', mass:BS_HOT_T }],
+          { roll:[2,'Cold','Battleship',BS_COLD_T,4,'Hot','Battleship',BS_HOT_T],
+            crit:[4,'Hot','Battleship',BS_HOT_T,1,'Cold','HIC',HIC_COLD_T] },
+          { roll:[6,'Hot','Battleship',BS_HOT_T],
+            crit:[1,'Cold','Battleship',BS_COLD_T,5,'Hot','Battleship',BS_HOT_T] }
         );
         break;
 
       default:
-        html += `<p>⚠️ No stable‐state logic for this wormhole class.</p>`;
+        html += `<p>⚠️ No stable‐state logic defined for this class.</p>`;
     }
   }
 
-  html += `</div>`;
+  html += '</div>';
   out.innerHTML = html;
 }
 
-// Utility: render your Method‐Only Stable block
-function renderStableBlock(title, initialJumps, yesCases, noCases) {
+// Renders the “Method Only” stable block
+function renderStableBlock(title, initial, yesCase, noCase) {
   let s = `<h4>${title}</h4>
     <h4>Initial Check</h4>
     <ul>`;
-  initialJumps.forEach(j => {
-    s += `<li>${j.count} ${j.mode} Jump${j.count>1?'s':''}
-           (${j.type}, ${j.mass.toLocaleString()} kg each)</li>`;
+  initial.forEach(j => {
+    s += `<li>${j.count} ${j.mode} Jump${j.count>1?'s':''} 
+           (${j.type}, ${j.mass.toLocaleString()} t each)</li>`;
   });
   s += `<li>🔍 Ask: Is the hole reduced?</li></ul>`;
 
-  const [yes, no] = [yesCases[0], noCases[0]];
   s += `<h4>If YES</h4><ul>`;
-  yes.roll   .forEachChunk(c => s+=chunkToLi('Roll',c));
-  yes.crit   .forEachChunk(c => s+=chunkToLi('Crit',c));
+  chunkToLi('To Roll', yesCase.roll);
+  chunkToLi('To Crit', yesCase.crit);
   s += `</ul>`;
 
   s += `<h4>If NO</h4><ul>`;
-  no.roll    .forEachChunk(c => s+=chunkToLi('Roll',c));
-  no.crit    .forEachChunk(c => s+=chunkToLi('Crit',c));
+  chunkToLi('To Roll', noCase.roll);
+  chunkToLi('To Crit', noCase.crit);
   s += `</ul><p><em>All ships end on the original side.</em></p>`;
-
   return s;
 }
 
-// Take an array like [2,'Hot','Battleship',300000,1,'Cold','Battleship',200000]
-// and turn into a <li>
-Array.prototype.forEachChunk = function(fn) {
-  for (let i=0; i<this.length; i+=4) {
-    fn(this.slice(i,i+4));
+// Write a single li given [count,mode,type,mass]
+function chunkToLi(label, arr) {
+  let tmp = '';
+  for (let i = 0; i < arr.length; i += 4) {
+    const [count, mode, type, mass] = arr.slice(i,i+4);
+    tmp += `<li>${label}: ${count} ${mode} Jump${count>1?'s':''} 
+            (${type}, ${mass.toLocaleString()} t each)</li>`;
   }
-};
-
-function chunkToLi(kind, [count, mode, type, mass]) {
-  return `<li>To ${kind}: ${count} ${mode} Jump${count>1?'s':''}
-          (${type}, ${mass.toLocaleString()} kg each)</li>`;
+  // inject into the current UL
+  document.write(tmp);
 }
 
 init();
