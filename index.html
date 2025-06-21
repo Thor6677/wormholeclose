@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Wormhole Roller – EVE Online Tool</title>
+  <title>Wormhole Roller – EVE Tool</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -12,15 +12,15 @@
 
     <section class="wormhole-settings">
       <h2>Wormhole Parameters</h2>
-      
+
       <label>Wormhole Type:
-        <select id="wormhole-type" onchange="updateWormholeMass()">
+        <select id="wormhole-type">
           <option value="">-- Select Wormhole Type --</option>
         </select>
       </label>
 
       <p><strong>Maximum Mass:</strong> <span id="max-mass-display">—</span></p>
-      <p><strong>Estimated Remaining Mass (based on status):</strong> <span id="remaining-mass-display">—</span></p>
+      <p><strong>Remaining Mass (based on status):</strong> <span id="remaining-mass-display">—</span></p>
 
       <label>Current Status:
         <select id="wormhole-status">
@@ -37,7 +37,7 @@
         </select>
       </label>
 
-      <button onclick="generateRollPlan()">Generate Rolling Plan</button>
+      <button id="generate-btn">Generate Rolling Plan</button>
     </section>
 
     <section class="roll-plan">
