@@ -1,51 +1,32 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Wormhole Roller – EVE Tool</title>
-  <link rel="stylesheet" href="style.css" />
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
+  <title>Wormhole Roller – Safe Collapse</title>
+  <link rel="stylesheet" href="style.css"/>
 </head>
 <body>
   <div class="container">
     <h1>Wormhole Roller Tool</h1>
-
-    <section class="wormhole-settings">
-      <h2>Wormhole Parameters</h2>
-
+    <section>
       <label>Wormhole Type:
-        <select id="wormhole-type">
-          <option value="">-- Select Wormhole Type --</option>
-        </select>
+        <select id="wormhole-type"></select>
       </label>
-
-      <p><strong>Maximum Mass:</strong> <span id="max-mass-display">—</span></p>
-      <p><strong>Remaining Mass (based on status):</strong> <span id="remaining-mass-display">—</span></p>
-
-      <label>Current Status:
+      <label>Status:
         <select id="wormhole-status">
           <option value="stable">Stable (100–50%)</option>
           <option value="unstable">Unstable (50–10%)</option>
           <option value="critical">Critical (<10%)</option>
         </select>
       </label>
-
-      <label>End Side:
-        <select id="end-side">
-          <option value="same" selected>Same Side</option>
-          <option value="other">Opposite Side</option>
-        </select>
-      </label>
-
       <button id="generate-btn">Generate Rolling Plan</button>
     </section>
-
-    <section class="roll-plan">
-      <h2>Rolling Plan</h2>
+    <section>
+      <h2>Plan</h2>
       <div id="plan-output"></div>
     </section>
   </div>
-
   <script type="module" src="app.js"></script>
 </body>
 </html>
