@@ -5,7 +5,6 @@ body {
   margin: 0;
   padding: 20px;
 }
-
 .container {
   max-width: 700px;
   margin: auto;
@@ -13,16 +12,13 @@ body {
   padding: 20px;
   border-radius: 8px;
 }
-
 h1, h2 {
   color: #0ff;
 }
-
 label {
   display: block;
   margin: 15px 0 5px;
 }
-
 select, button {
   width: 100%;
   padding: 8px;
@@ -30,7 +26,6 @@ select, button {
   border-radius: 4px;
   font-size: 14px;
 }
-
 button {
   background: #0ff;
   color: #111;
@@ -38,11 +33,9 @@ button {
   margin-top: 10px;
   cursor: pointer;
 }
-
 button:hover {
   background: #0cc;
 }
-
 .plan-box {
   background-color: #333;
   padding: 15px;
@@ -50,19 +43,21 @@ button:hover {
   border-left: 5px solid #0ff;
   border-radius: 6px;
   line-height: 1.5;
-  white-space: pre-wrap;        /* allow wrapping */
-  word-break: break-word;       /* break long words */
-  overflow-x: auto;             /* horizontal scroll if needed */
+  overflow-x: auto;
 }
-
+.plan-box h3 {
+  margin-top: 0;
+}
+.plan-box h4 {
+  margin-bottom: 5px;
+  margin-top: 15px;
+}
 .plan-box ul {
   margin: 5px 0 15px 20px;
 }
-
 .plan-box ul li {
   margin-bottom: 5px;
 }
-
 .warning {
   background-color: #440000;
   border-left: 5px solid red;
