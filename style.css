@@ -7,7 +7,7 @@ body {
 }
 
 .container {
-  max-width: 600px;
+  max-width: 700px;
   margin: auto;
   background: #222;
   padding: 20px;
@@ -23,7 +23,7 @@ label {
   margin-bottom: 10px;
 }
 
-input[type="number"] {
+input, select {
   width: 100%;
   padding: 8px;
   margin-top: 5px;
@@ -45,7 +45,11 @@ button:hover {
   background-color: #0cc;
 }
 
-ul {
-  list-style-type: none;
-  padding: 0;
+.plan-box {
+  background-color: #333;
+  padding: 15px;
+  margin-top: 10px;
+  border-left: 5px solid #0ff;
+  border-radius: 6px;
+  line-height: 1.5;
 }
