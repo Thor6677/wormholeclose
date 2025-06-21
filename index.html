@@ -9,10 +9,14 @@
 <body>
   <div class="container">
     <h1>Wormhole Roller Tool</h1>
-    <section>
+
+    <section class="wormhole-settings">
       <label>Wormhole Type:
-        <select id="wormhole-type"></select>
+        <select id="wormhole-type">
+          <option value="">-- Select Wormhole Type --</option>
+        </select>
       </label>
+
       <label>Status:
         <select id="wormhole-status">
           <option value="stable">Stable (100–50%)</option>
@@ -20,13 +24,16 @@
           <option value="critical">Critical (<10%)</option>
         </select>
       </label>
+
       <button id="generate-btn">Generate Rolling Plan</button>
     </section>
-    <section>
-      <h2>Plan</h2>
+
+    <section class="roll-plan">
+      <h2>Rolling Plan</h2>
       <div id="plan-output"></div>
     </section>
   </div>
+
   <script type="module" src="app.js"></script>
 </body>
 </html>
