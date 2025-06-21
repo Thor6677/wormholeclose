@@ -2,8 +2,8 @@ body {
   font-family: Arial, sans-serif;
   background-color: #111;
   color: #eee;
-  padding: 20px;
   margin: 0;
+  padding: 20px;
 }
 
 .container {
@@ -12,7 +12,6 @@ body {
   background: #222;
   padding: 20px;
   border-radius: 8px;
-  box-shadow: 0 0 10px #000;
 }
 
 h1, h2 {
@@ -21,38 +20,33 @@ h1, h2 {
 
 label {
   display: block;
-  margin-bottom: 10px;
+  margin: 15px 0 5px;
 }
 
-input, select {
+select, button {
   width: 100%;
   padding: 8px;
-  margin-top: 5px;
-  margin-bottom: 15px;
   border: none;
   border-radius: 4px;
   font-size: 14px;
 }
 
 button {
-  padding: 10px 15px;
-  background-color: #0ff;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  font-weight: bold;
-  font-size: 16px;
+  background: #0ff;
   color: #111;
+  font-weight: bold;
+  margin-top: 10px;
+  cursor: pointer;
 }
 
 button:hover {
-  background-color: #0cc;
+  background: #0cc;
 }
 
 .plan-box {
   background-color: #333;
   padding: 15px;
-  margin-top: 10px;
+  margin-top: 15px;
   border-left: 5px solid #0ff;
   border-radius: 6px;
   line-height: 1.5;
@@ -62,19 +56,7 @@ button:hover {
   background-color: #440000;
   border-left: 5px solid red;
   padding: 15px;
-  color: #ffaaaa;
-  margin-top: 10px;
+  margin-top: 15px;
   border-radius: 6px;
-}
-
-select, input[type="number"] {
-  background-color: #111;
-  color: #eee;
-  border: 1px solid #444;
-}
-
-select:focus, input:focus {
-  outline: none;
-  border-color: #0ff;
-  background-color: #181818;
+  color: #ffaaaa;
 }
