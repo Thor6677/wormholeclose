@@ -13,10 +13,11 @@ window.onload = () => {
 };
 
 function getColorCodeByMass(mass) {
-  if (mass >= 3_300_000_000) return 'orange';
-  if (mass >= 3_000_000_000) return 'yellow';
-  if (mass >= 2_000_000_000) return 'green';
-  if (mass >= 1_000_000_000) return 'blue';
+  // Adjusted thresholds to match your real data (values in millions)
+  if (mass >= 3_300_000) return 'orange';
+  if (mass >= 3_000_000) return 'yellow';
+  if (mass >= 2_000_000) return 'green';
+  if (mass >= 1_000_000) return 'blue';
   return 'unknown';
 }
 
@@ -44,9 +45,9 @@ window.generateRollPlan = function () {
 
   let intro = `<strong>Wormhole Type:</strong> ${type} (${wh.totalMass.toLocaleString()}kg)<br>`;
   intro += `<strong>Status:</strong> ${status.charAt(0).toUpperCase() + status.slice(1)}<br><br>`;
-  
-  const cold = 200_000_000; // 200M kg
-  const hot = 300_000_000;  // 300M kg
+
+  const cold = 200_000; // 200M kg
+  const hot = 300_000;  // 300M kg
 
   let plan = '';
 
@@ -120,7 +121,7 @@ window.generateRollPlan = function () {
       break;
 
     default:
-      plan = `No plan available for this wormhole type.`;
+      plan = `⚠️ No rolling strategy available for this wormhole type. It may not support battleship mass.`;
   }
 
   output.innerHTML = `${intro}<div class="plan-box">${plan}</div>`;
