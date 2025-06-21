@@ -1,5 +1,8 @@
 import { wormholes } from './data/wormholes.js';
 
+let maxMass = 0;
+let remainingMass = 0;
+
 window.onload = () => {
   const select = document.getElementById('wormhole-type');
   wormholes.forEach(wh => {
@@ -25,28 +28,25 @@ window.updateWormholeMass = function () {
   const wh = wormholes.find(w => w.type === type);
   if (!wh) return;
 
-  const maxInput = document.getElementById('max-mass');
-  const remainingInput = document.getElementById('remaining-mass');
+  maxMass = wh.totalMass;
+  document.getElementById('max-mass-display').textContent = maxMass.toLocaleString() + ' kg';
 
-  maxInput.value = wh.totalMass;
   document.getElementById('wormhole-status').value = 'stable';
-  remainingInput.value = wh.totalMass;
+  updateMassFromStatus();
 };
 
 function updateMassFromStatus() {
-  const maxMass = parseFloat(document.getElementById('max-mass').value);
   const status = document.getElementById('wormhole-status').value;
-  const remainingInput = document.getElementById('remaining-mass');
-
-  if (!maxMass) return;
 
   if (status === 'stable') {
-    remainingInput.value = maxMass;
+    remainingMass = maxMass;
   } else if (status === 'unstable') {
-    remainingInput.value = Math.floor(maxMass * 0.11);
+    remainingMass = Math.floor(maxMass * 0.11);
   } else if (status === 'critical') {
-    remainingInput.value = Math.floor(maxMass * 0.01);
+    remainingMass = Math.floor(maxMass * 0.01);
   }
+
+  document.getElementById('remaining-mass-display').textContent = remainingMass.toLocaleString() + ' kg';
 }
 
 window.generateRollPlan = function () {
@@ -61,28 +61,10 @@ window.generateRollPlan = function () {
     return;
   }
 
-  const maxMass = parseFloat(document.getElementById('max-mass').value);
-  const remainingMass = parseFloat(document.getElementById('remaining-mass').value);
   const percentRemaining = (remainingMass / maxMass) * 100;
 
-  let expectedStatus = '';
-  if (percentRemaining > 50) expectedStatus = 'stable';
-  else if (percentRemaining > 10) expectedStatus = 'unstable';
-  else expectedStatus = 'critical';
-
-  if (status !== expectedStatus) {
-    output.innerHTML = `
-      <div class="plan-box warning">
-        ⚠️ <strong>Input mismatch:</strong> Status "<strong>${status}</strong>" selected, 
-        but remaining mass is <strong>${percentRemaining.toFixed(1)}%</strong> 
-        (<strong>${expectedStatus}</strong> expected).<br><br>
-        Adjust status or wormhole type to fix.
-      </div>`;
-    return;
-  }
-
-  const colorCode = getColorCodeByMass(wh.totalMass);
-  let intro = `<strong>Wormhole Type:</strong> ${type} (${wh.totalMass.toLocaleString()} kg)<br>`;
+  const colorCode = getColorCodeByMass(maxMass);
+  let intro = `<strong>Wormhole Type:</strong> ${type} (${maxMass.toLocaleString()} kg)<br>`;
   intro += `<strong>Status:</strong> ${status.charAt(0).toUpperCase() + status.slice(1)}<br>`;
   intro += `<strong>Desired End Side:</strong> ${endSide === 'same' ? 'Same Side' : 'Opposite Side'}<br><br>`;
 
