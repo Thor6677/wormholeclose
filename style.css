@@ -43,14 +43,9 @@ button:hover {
   border-left: 5px solid #0ff;
   border-radius: 6px;
   line-height: 1.5;
-  overflow-x: auto;
 }
 .plan-box h3 {
   margin-top: 0;
-}
-.plan-box h4 {
-  margin-bottom: 5px;
-  margin-top: 15px;
 }
 .plan-box ul {
   margin: 5px 0 15px 20px;
