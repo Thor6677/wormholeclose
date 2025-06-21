@@ -25,7 +25,28 @@ window.updateWormholeMass = function () {
 
   document.getElementById('max-mass').value = wh.totalMass;
   document.getElementById('remaining-mass').value = wh.totalMass;
+  updateStatusFromMass();
 };
+
+document.getElementById('remaining-mass').addEventListener('input', updateStatusFromMass);
+
+function updateStatusFromMass() {
+  const maxMass = parseFloat(document.getElementById('max-mass').value);
+  const remaining = parseFloat(document.getElementById('remaining-mass').value);
+  const statusSelect = document.getElementById('wormhole-status');
+
+  if (!maxMass || !remaining) return;
+
+  const percent = (remaining / maxMass) * 100;
+
+  if (percent > 50) {
+    statusSelect.value = 'stable';
+  } else if (percent > 10) {
+    statusSelect.value = 'unstable';
+  } else {
+    statusSelect.value = 'critical';
+  }
+}
 
 window.generateRollPlan = function () {
   const type = document.getElementById('wormhole-type').value;
@@ -39,6 +60,26 @@ window.generateRollPlan = function () {
     return;
   }
 
+  const maxMass = parseFloat(document.getElementById('max-mass').value);
+  const remainingMass = parseFloat(document.getElementById('remaining-mass').value);
+  const percentRemaining = (remainingMass / maxMass) * 100;
+
+  let expectedStatus = '';
+  if (percentRemaining > 50) expectedStatus = 'stable';
+  else if (percentRemaining > 10) expectedStatus = 'unstable';
+  else expectedStatus = 'critical';
+
+  if (status !== expectedStatus) {
+    output.innerHTML = `
+      <div class="plan-box warning">
+        ⚠️ <strong>Input mismatch:</strong> Selected status is "<strong>${status}</strong>", 
+        but remaining mass is <strong>${percentRemaining.toFixed(1)}%</strong> of max 
+        (<strong>${expectedStatus}</strong> expected).<br><br>
+        Please adjust either the status or mass to match reality.
+      </div>`;
+    return;
+  }
+
   const colorCode = getColorCodeByMass(wh.totalMass);
   let intro = `<strong>Wormhole Type:</strong> ${type} (${wh.totalMass.toLocaleString()} kg)<br>`;
   intro += `<strong>Status:</strong> ${status.charAt(0).toUpperCase() + status.slice(1)}<br>`;
@@ -49,33 +90,25 @@ window.generateRollPlan = function () {
   const Cru = 'Cruiser';
   const hic = 'HIC (Heavy Interdictor)';
 
-  // CRITICAL
   if (status === 'critical') {
     plan = `
       🔴 <strong>Critical (<10%)</strong><br><br>
       Suggested Ship: <strong>${hic}</strong><br>
       ➤ Use 1 Cold jump at a time.<br>
-      ➤ Avoid Hot jumps unless you're collapsing intentionally.<br>
-      ➤ Scout both sides. Use d-scan or backup scanner.<br>
-      ➤ <em>Same Side:</em> Repeat Cold jumps until collapse.<br>
-      ➤ <em>Opposite Side:</em> Hot jump from current side, then second Hot after 60s.<br>
+      ➤ Avoid Hot jumps unless collapsing intentionally.<br>
+      ➤ <em>Same Side:</em> Repeat Cold until collapse.<br>
+      ➤ <em>Opposite Side:</em> Hot jump, wait 60s, second Hot jump to collapse.
     `;
-  }
-
-  // UNSTABLE
-  else if (status === 'unstable') {
+  } else if (status === 'unstable') {
     plan = `
       ⚠️ <strong>Unstable (50–10%)</strong><br><br>
       Suggested Ships: <strong>${BS}</strong> or <strong>${Cru}</strong><br>
       ➤ Jump 2 Cold + 2 Hot through.<br>
       ➤ Check WH status after each pair.<br>
       ➤ <em>Same Side:</em> Return 2 Cold + 2 Hot.<br>
-      ➤ <em>Opposite Side:</em> Add final Hot jump from your side.<br>
+      ➤ <em>Opposite Side:</em> Add final Hot jump from your side.
     `;
-  }
-
-  // STABLE
-  else {
+  } else {
     switch (colorCode) {
       case 'blue':
         plan = `
