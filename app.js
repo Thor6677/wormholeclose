@@ -8,6 +8,8 @@ window.onload = () => {
     opt.textContent = `${wh.type} – ${wh.from || '?'} → ${wh.to || '?'}`;
     select.appendChild(opt);
   });
+
+  document.getElementById('wormhole-status').addEventListener('change', updateMassFromStatus);
 };
 
 function getColorCodeByMass(mass) {
@@ -23,28 +25,27 @@ window.updateWormholeMass = function () {
   const wh = wormholes.find(w => w.type === type);
   if (!wh) return;
 
-  document.getElementById('max-mass').value = wh.totalMass;
-  document.getElementById('remaining-mass').value = wh.totalMass;
-  updateStatusFromMass();
+  const maxInput = document.getElementById('max-mass');
+  const remainingInput = document.getElementById('remaining-mass');
+
+  maxInput.value = wh.totalMass;
+  document.getElementById('wormhole-status').value = 'stable';
+  remainingInput.value = wh.totalMass;
 };
 
-document.getElementById('remaining-mass').addEventListener('input', updateStatusFromMass);
-
-function updateStatusFromMass() {
+function updateMassFromStatus() {
   const maxMass = parseFloat(document.getElementById('max-mass').value);
-  const remaining = parseFloat(document.getElementById('remaining-mass').value);
-  const statusSelect = document.getElementById('wormhole-status');
+  const status = document.getElementById('wormhole-status').value;
+  const remainingInput = document.getElementById('remaining-mass');
 
-  if (!maxMass || !remaining) return;
+  if (!maxMass) return;
 
-  const percent = (remaining / maxMass) * 100;
-
-  if (percent > 50) {
-    statusSelect.value = 'stable';
-  } else if (percent > 10) {
-    statusSelect.value = 'unstable';
-  } else {
-    statusSelect.value = 'critical';
+  if (status === 'stable') {
+    remainingInput.value = maxMass;
+  } else if (status === 'unstable') {
+    remainingInput.value = Math.floor(maxMass * 0.11);
+  } else if (status === 'critical') {
+    remainingInput.value = Math.floor(maxMass * 0.01);
   }
 }
 
@@ -72,10 +73,10 @@ window.generateRollPlan = function () {
   if (status !== expectedStatus) {
     output.innerHTML = `
       <div class="plan-box warning">
-        ⚠️ <strong>Input mismatch:</strong> Selected status is "<strong>${status}</strong>", 
-        but remaining mass is <strong>${percentRemaining.toFixed(1)}%</strong> of max 
+        ⚠️ <strong>Input mismatch:</strong> Status "<strong>${status}</strong>" selected, 
+        but remaining mass is <strong>${percentRemaining.toFixed(1)}%</strong> 
         (<strong>${expectedStatus}</strong> expected).<br><br>
-        Please adjust either the status or mass to match reality.
+        Adjust status or wormhole type to fix.
       </div>`;
     return;
   }
