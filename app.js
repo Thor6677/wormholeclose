@@ -231,7 +231,7 @@ function onCalculate() {
       <span>Goal: <strong>${goal === 'close' ? 'Collapse' : `≤ ${fmt(goalMass)} t (${(GOAL_TARGET[goal]*100).toFixed(0)}%)`}</strong></span>
       <span>Max to consume: <strong>${fmt(Math.max(0, startMass - goalMass))} t</strong></span>
     </div>
-    <p class="note">⚠️ The wormhole may already be closer to ${status === 'stable' ? 'Unstable' : 'Critical'} than the worst case.
+    <p class="note">⚠️ The wormhole may already be closer to ${status === 'stable' ? 'Unstable' : status === 'unstable' ? 'Critical' : 'collapse'} than the worst case assumed.
     Check status after <strong>every jump in</strong> before committing to the return.</p>`;
 
   if (oversized.length)  html += `<p class="warn-text">⚠️ ${oversized.join(', ')} excluded — exceed max individual mass.</p>`;
@@ -278,22 +278,24 @@ function onCalculate() {
 
       if (inCollapses) {
         html += `<div class="step-check">
-          <p class="check-danger">🚨 This outbound jump would collapse the wormhole — ship would be <strong>stranded on the far side</strong>. Do not jump. Reduce the previous rolling steps.</p>
+          <p class="check-danger">🚨 This Jump IN would collapse the wormhole — ship would be <strong>stranded on the far side</strong>. Do not jump. Reduce the previous rolling steps.</p>
         </div>`;
       } else {
-        html += `<div class="step-check">
-          <strong>Check status before returning:</strong>
-          <ul>
-            <li class="check-ok">✅ Still <span class="${statusClass(fracBefore)}">${statusLabel(fracBefore)}</span> → proceed to Step ${stepNum + 1} (return)</li>`;
+        const expectedLabel = statusLabel(fracAfterIn);
+        const expectedClass = statusClass(fracAfterIn);
 
-        if (fracBefore >= 0.5 && fracAfterIn < 0.5) {
-          html += `<li class="check-warn">⚠️ Now <span class="status-unstable">Unstable</span> → return <strong>COLD</strong>, then reassess remaining ships</li>`;
+        html += `<div class="step-check">
+          <strong>After jumping in — check wormhole status:</strong>
+          <ul>
+            <li class="check-ok">✅ Shows <span class="${expectedClass}">${expectedLabel}</span> → proceed to Step ${stepNum + 1} (return)</li>`;
+
+        if (expectedLabel === 'Stable') {
+          html += `<li class="check-warn">⚠️ Shows <span class="status-unstable">Unstable</span> → return <strong>COLD</strong>, reassess remaining ships</li>`;
+          html += `<li class="check-warn">⚠️ Shows <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all ships, skip to closure</li>`;
+        } else if (expectedLabel === 'Unstable') {
+          html += `<li class="check-warn">⚠️ Shows <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all ships, skip to closure</li>`;
         }
-        if (fracAfterIn < 0.1 && fracAfterIn > 0) {
-          html += `<li class="check-warn">⚠️ Now <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all other ships, skip to closure</li>`;
-        }
-        html += `<li class="check-warn">⚠️ Dropped a tier unexpectedly → return <strong>COLD</strong> and reassess before sending more ships</li>
-          </ul>
+        html += `</ul>
         </div>`;
       }
       html += `</li>`;
@@ -321,11 +323,15 @@ function onCalculate() {
         </div>`;
       } else {
         html += `<div class="step-check">
-          <strong>After return — check status:</strong>
-          <ul>
-            <li class="check-ok">✅ <span class="${statusClass(fracAfterOut)}">${statusLabel(fracAfterOut)}</span>${isLast ? ' — all ships back, proceed to closure' : ` — continue to Step ${stepNum + 1}`}</li>`;
+          <strong>After returning — check status:</strong>
+          <ul>`;
         if (critOnReturn) {
-          html += `<li class="check-warn">⚠️ Now <span class="status-critical">Critical</span> — do not send more rolling ships, proceed to closure</li>`;
+          html += `<li class="check-ok">✅ Now <span class="status-critical">Critical</span> — rolling complete, proceed to closure</li>`;
+          if (!isLast) {
+            html += `<li class="check-warn">⚠️ Hold all remaining ships — wormhole is Critical, no further rolling needed</li>`;
+          }
+        } else {
+          html += `<li class="check-ok">✅ <span class="${statusClass(fracAfterOut)}">${statusLabel(fracAfterOut)}</span>${isLast ? ' — all ships back, proceed to closure' : ` — continue to Step ${stepNum + 1}`}</li>`;
         }
         html += `</ul></div>`;
       }
