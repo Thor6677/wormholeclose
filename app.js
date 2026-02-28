@@ -4,10 +4,15 @@ const JumpMass = {
   Battleship: { cold: 200_000, hot: 300_000 },
   Cruiser:    { cold:  36_000, hot: 126_000 },
   HIC:        { cold:     830, hot: 132_400 },
+  Custom:     { cold:       0, hot:       0 },
 };
 
-const STATUS_MAX  = { stable: 1.0, unstable: 0.5, critical: 0.1 };
-const GOAL_TARGET = { crit: 0.1, close: 0.0 };
+// Worst-case starting mass fraction per status
+const STATUS_MAX = { stable: 1.0, unstable: 0.5, critical: 0.1 };
+
+// Target remaining mass fraction per goal
+// 'doorstop' uses same target as 'crit' — rolling stops at crit, then doorstop handles close
+const GOAL_TARGET = { crit: 0.1, close: 0.0, doorstop: 0.1 };
 
 function init() {
   const datalist = document.getElementById('wormhole-list');
@@ -16,10 +21,11 @@ function init() {
     opt.value = w.type;
     datalist.appendChild(opt);
   });
+
   document.getElementById('wormhole-input').addEventListener('input',  onWHInput);
   document.getElementById('wormhole-input').addEventListener('change', onWHInput);
   document.getElementById('wormhole-goal').addEventListener('change',  onGoalChange);
-  document.getElementById('use-doorstop').addEventListener('change',   onDoorstopToggle);
+  document.getElementById('fleet-custom').addEventListener('input',    onCustomCount);
   document.getElementById('calc-btn').addEventListener('click', onCalculate);
 }
 
@@ -35,94 +41,110 @@ function onWHInput() {
 }
 
 function onGoalChange() {
-  const isCrit = document.getElementById('wormhole-goal').value === 'crit';
-  document.getElementById('doorstop-section').classList.toggle('hidden', !isCrit);
-  if (!isCrit) {
-    document.getElementById('use-doorstop').checked = false;
-    document.getElementById('doorstop-ship-wrap').classList.add('hidden');
-  }
+  const goal = document.getElementById('wormhole-goal').value;
+  document.getElementById('doorstop-section').classList.toggle('hidden', goal !== 'doorstop');
 }
 
-function onDoorstopToggle() {
-  const checked = document.getElementById('use-doorstop').checked;
-  document.getElementById('doorstop-ship-wrap').classList.toggle('hidden', !checked);
+function onCustomCount() {
+  const count = parseInt(document.getElementById('fleet-custom').value) || 0;
+  document.getElementById('custom-mass-row').classList.toggle('hidden', count === 0);
 }
 
 function getFleet() {
+  const customCold = parseInt(document.getElementById('custom-cold').value) || 0;
+  const customHot  = parseInt(document.getElementById('custom-hot').value)  || 0;
+  JumpMass.Custom = { cold: customCold, hot: customHot };
+
   return {
     Battleship: parseInt(document.getElementById('fleet-battleship').value) || 0,
     Cruiser:    parseInt(document.getElementById('fleet-cruiser').value)    || 0,
     HIC:        parseInt(document.getElementById('fleet-hic').value)        || 0,
+    Custom:     parseInt(document.getElementById('fleet-custom').value)     || 0,
   };
 }
 
 /**
- * Given a mass target, assign each ship's two legs (out + back) as cold or hot
- * to consume as close to targetMass as possible without going under.
+ * Assign the minimum number of ships and the best cold/hot leg combination
+ * to consume at least targetMass tonnes.
  *
- * Strategy: start all cold-cold (minimum), then greedily upgrade individual
- * legs cold→hot (largest gain first) until we reach the target.
- *
- * Each ship can be in one of three states:
- *   cc = both legs cold  (2 × cold)
- *   ch = one leg cold + one leg hot  (cold + hot)
- *   hh = both legs hot  (2 × hot)
+ * Adds ships largest-per-trip first (for efficiency), starting each at
+ * cold-cold (minimum), then upgrades individual legs cold→hot until target reached.
  */
 function assignJumps(validFleet, targetMass) {
-  const assignments = {};
+  const types = Object.keys(validFleet).sort(
+    (a, b) => (JumpMass[b].cold + JumpMass[b].hot) - (JumpMass[a].cold + JumpMass[a].hot)
+  );
+
+  const used = {};
   let currentMass = 0;
 
-  for (const [type, count] of Object.entries(validFleet)) {
-    assignments[type] = { cc: count, ch: 0, hh: 0 };
-    currentMass += count * 2 * JumpMass[type].cold;
-  }
-
-  if (currentMass >= targetMass) {
-    return { assignments, actualMass: currentMass };
-  }
-
-  // Each ship has 2 legs; each upgrade swaps one cold leg to hot
-  const upgrades = [];
-  for (const type of Object.keys(validFleet)) {
-    const gain = JumpMass[type].hot - JumpMass[type].cold;
-    for (let i = 0; i < validFleet[type] * 2; i++) {
-      upgrades.push({ type, gain });
+  // Add ships one at a time (largest first), each starting at CC
+  outer: for (const type of types) {
+    for (let i = 0; i < validFleet[type]; i++) {
+      if (currentMass >= targetMass) break outer;
+      if (!used[type]) used[type] = { cc: 0, ch: 0, hh: 0 };
+      used[type].cc++;
+      currentMass += 2 * JumpMass[type].cold;
     }
+  }
+
+  // Upgrade legs cold→hot (largest gain first) to fine-tune toward target
+  const upgrades = [];
+  for (const [type, asgn] of Object.entries(used)) {
+    const gain  = JumpMass[type].hot - JumpMass[type].cold;
+    const count = asgn.cc + asgn.ch + asgn.hh;
+    for (let i = 0; i < count * 2; i++) upgrades.push({ type, gain });
   }
   upgrades.sort((a, b) => b.gain - a.gain);
 
   for (const upg of upgrades) {
     if (currentMass >= targetMass) break;
     currentMass += upg.gain;
-    const asgn = assignments[upg.type];
-    if (asgn.cc > 0) {
-      asgn.cc--;
-      asgn.ch++;   // CC → CH
-    } else if (asgn.ch > 0) {
-      asgn.ch--;
-      asgn.hh++;   // CH → HH
-    }
+    const asgn = used[upg.type];
+    if (asgn.cc > 0)      { asgn.cc--; asgn.ch++; }
+    else if (asgn.ch > 0) { asgn.ch--; asgn.hh++; }
   }
 
+  const assignments = {};
+  for (const type of Object.keys(validFleet)) assignments[type] = used[type] || { cc: 0, ch: 0, hh: 0 };
   return { assignments, actualMass: currentMass };
 }
 
-function renderAssignmentRows(validFleet, assignments) {
-  let html = '';
-  for (const [type, asgn] of Object.entries(assignments)) {
-    if (!validFleet[type]) continue;
-    const m = JumpMass[type];
-    if (asgn.cc > 0) {
-      html += `<li>${asgn.cc}× ${type} — COLD out + COLD back = ${fmt(2 * m.cold)} t each (${fmt(asgn.cc * 2 * m.cold)} t)</li>`;
-    }
-    if (asgn.ch > 0) {
-      html += `<li>${asgn.ch}× ${type} — one leg COLD + one leg HOT = ${fmt(m.cold + m.hot)} t each (${fmt(asgn.ch * (m.cold + m.hot))} t)</li>`;
-    }
-    if (asgn.hh > 0) {
-      html += `<li>${asgn.hh}× ${type} — HOT out + HOT back = ${fmt(2 * m.hot)} t each (${fmt(asgn.hh * 2 * m.hot)} t)</li>`;
+/**
+ * Expand passes into a flat list of per-ship round trips.
+ * Each entry: { type, inMode, outMode, passType }
+ */
+function buildRoundTrips(validFleet, fullPasses, partialResult) {
+  const trips = [];
+
+  for (let p = 0; p < fullPasses; p++) {
+    for (const [type, count] of Object.entries(validFleet)) {
+      for (let i = 0; i < count; i++)
+        trips.push({ type, inMode: 'cold', outMode: 'hot', passType: 'full' });
     }
   }
-  return html;
+
+  if (partialResult) {
+    for (const type of ['Battleship', 'Custom', 'Cruiser', 'HIC']) {
+      const asgn = partialResult.assignments[type];
+      if (!asgn || !validFleet[type]) continue;
+      for (let i = 0; i < asgn.cc; i++)
+        trips.push({ type, inMode: 'cold', outMode: 'cold', passType: 'calibrated' });
+      for (let i = 0; i < asgn.ch; i++)
+        trips.push({ type, inMode: 'cold', outMode: 'hot',  passType: 'calibrated' });
+      for (let i = 0; i < asgn.hh; i++)
+        trips.push({ type, inMode: 'hot',  outMode: 'hot',  passType: 'calibrated' });
+    }
+  }
+
+  return trips;
+}
+
+function statusLabel(frac) {
+  return frac >= 0.5 ? 'Stable' : frac >= 0.1 ? 'Unstable' : 'Critical';
+}
+function statusClass(frac) {
+  return frac >= 0.5 ? 'status-stable' : frac >= 0.1 ? 'status-unstable' : 'status-critical';
 }
 
 function onCalculate() {
@@ -133,8 +155,8 @@ function onCalculate() {
   const fleet  = getFleet();
   const output = document.getElementById('plan-output');
 
-  const useDoorstop  = goal === 'crit' && document.getElementById('use-doorstop').checked;
-  const doorstopType = useDoorstop ? document.getElementById('doorstop-ship').value : null;
+  const isDoorstop   = goal === 'doorstop';
+  const doorstopType = isDoorstop ? document.getElementById('doorstop-ship').value : null;
 
   if (!w) {
     output.innerHTML = '<div class="plan-box warning">❗ Select a valid wormhole first.</div>';
@@ -144,145 +166,252 @@ function onCalculate() {
     output.innerHTML = '<div class="plan-box warning">❗ Add at least one ship to your fleet.</div>';
     return;
   }
+  if (fleet.Custom > 0 && (JumpMass.Custom.cold === 0 && JumpMass.Custom.hot === 0)) {
+    output.innerHTML = '<div class="plan-box warning">❗ Enter cold and hot mass values for your custom ship.</div>';
+    return;
+  }
 
-  // Separate valid ships from oversized ones
+  // Separate valid fleet from oversized ships
   const oversized  = [];
   const validFleet = {};
   for (const [type, count] of Object.entries(fleet)) {
     if (count <= 0) continue;
     const m = JumpMass[type];
-    if (m.cold > w.maxIndividualMass || m.hot > w.maxIndividualMass) {
-      oversized.push(type);
-    } else {
-      validFleet[type] = count;
-    }
+    if (m.cold > w.maxIndividualMass || m.hot > w.maxIndividualMass) oversized.push(type);
+    else validFleet[type] = count;
   }
-
   if (Object.keys(validFleet).length === 0) {
     output.innerHTML = `<div class="plan-box warning">⚠️ None of your ships fit this wormhole (max individual: ${w.maxIndividualMass.toLocaleString()} t).</div>`;
     return;
   }
 
   let doorstopError = '';
-  if (useDoorstop && doorstopType) {
-    if (JumpMass[doorstopType].cold > w.maxIndividualMass) {
-      doorstopError = `⚠️ Doorstop ${doorstopType} (cold ${JumpMass[doorstopType].cold.toLocaleString()} t) exceeds max individual mass (${w.maxIndividualMass.toLocaleString()} t).`;
+  if (isDoorstop && doorstopType) {
+    const dm = JumpMass[doorstopType];
+    if (!dm || dm.cold > w.maxIndividualMass) {
+      doorstopError = `⚠️ Doorstop ${doorstopType} exceeds max individual mass (${w.maxIndividualMass.toLocaleString()} t).`;
+    }
+    if (doorstopType === 'Custom' && dm.cold === 0 && dm.hot === 0) {
+      doorstopError = '⚠️ Enter cold/hot values for the custom doorstop ship.';
     }
   }
 
-  const startMass    = w.totalMass * STATUS_MAX[status];
-  const critMass     = w.totalMass * 0.10;
-  const goalMass     = w.totalMass * GOAL_TARGET[goal];
-  const doorstopCold = (useDoorstop && doorstopType && !doorstopError) ? JumpMass[doorstopType].cold : 0;
+  const totalMass    = w.totalMass;
+  const startMass    = totalMass * STATUS_MAX[status];
+  const critMass     = totalMass * 0.10;
+  const goalMass     = totalMass * GOAL_TARGET[goal];
+  const doorstopCold = (isDoorstop && doorstopType && !doorstopError) ? JumpMass[doorstopType].cold : 0;
 
-  // Round trips target: leave room for doorstop cold jump if using one
-  const roundTripTarget   = (useDoorstop && !doorstopError) ? critMass + doorstopCold : goalMass;
+  // Round trips should leave: critMass + doorstopCold for doorstop, or goalMass otherwise
+  const roundTripTarget   = (isDoorstop && !doorstopError) ? critMass + doorstopCold : goalMass;
   const massForRoundTrips = Math.max(0, startMass - roundTripTarget);
 
-  // Full passes use standard cold+hot per ship (familiar EVE rolling pattern)
-  const massPerPassCH = Object.entries(validFleet).reduce(
-    (sum, [type, count]) => sum + count * (JumpMass[type].cold + JumpMass[type].hot), 0
-  );
+  // Full passes: standard cold-out + hot-back
+  const massPerPassCH = Object.entries(validFleet)
+    .reduce((s, [t, c]) => s + c * (JumpMass[t].cold + JumpMass[t].hot), 0);
 
-  const fullPasses = Math.floor(massForRoundTrips / massPerPassCH);
-  let   remaining  = startMass - fullPasses * massPerPassCH;
+  const fullPasses  = Math.floor(massForRoundTrips / massPerPassCH);
+  let   remaining   = startMass - fullPasses * massPerPassCH;
 
-  // Partial pass: use assignJumps to optimise cold/hot per leg to hit the target
   const partialMassNeeded = remaining - roundTripTarget;
-  let   partialResult     = null;
-  if (partialMassNeeded > 0) {
-    partialResult = assignJumps(validFleet, partialMassNeeded);
-    remaining -= partialResult.actualMass;
-  }
+  const partialResult     = partialMassNeeded > 0 ? assignJumps(validFleet, partialMassNeeded) : null;
+  if (partialResult) remaining -= partialResult.actualMass;
 
-  // Doorstop cold jump
-  const afterDoorstop = (useDoorstop && !doorstopError)
-    ? Math.max(0, remaining - doorstopCold)
-    : remaining;
+  const afterDoorstop = (isDoorstop && !doorstopError)
+    ? Math.max(0, remaining - doorstopCold) : remaining;
 
-  // ── Build output ──
-  let stepNum = 0;
+  const trips = buildRoundTrips(validFleet, fullPasses, partialResult);
+
+  // ── Render ──
   let html = `<div class="plan-box">
-    <h3>${w.type} — ${capitalize(status)} → ${goal === 'crit' ? 'Crit' : 'Close'}</h3>
+    <h3>${w.type} — ${capitalize(status)} → ${goal === 'crit' ? 'Crit' : goal === 'close' ? 'Close' : 'Doorstop'}</h3>
     <div class="plan-stats">
-      <span>Start (worst case): <strong>${fmt(startMass)} t</strong></span>
-      <span>Goal: <strong>≤ ${fmt(goalMass)} t (${(GOAL_TARGET[goal] * 100).toFixed(0)}%)</strong></span>
-      <span>To consume: <strong>${fmt(Math.max(0, startMass - goalMass))} t</strong></span>
-    </div>`;
+      <span>Worst-case start: <strong>${fmt(startMass)} t</strong></span>
+      <span>Goal: <strong>${goal === 'close' ? 'Collapse' : `≤ ${fmt(goalMass)} t (${(GOAL_TARGET[goal]*100).toFixed(0)}%)`}</strong></span>
+      <span>Max to consume: <strong>${fmt(Math.max(0, startMass - goalMass))} t</strong></span>
+    </div>
+    <p class="note">⚠️ The wormhole may already be closer to ${status === 'stable' ? 'Unstable' : 'Critical'} than the worst case.
+    Check status after <strong>every jump in</strong> before committing to the return.</p>`;
 
-  if (oversized.length) {
-    html += `<p class="warn-text">⚠️ ${oversized.join(', ')} excluded — exceed max individual mass (${w.maxIndividualMass.toLocaleString()} t).</p>`;
-  }
-  if (doorstopError) html += `<p class="warn-text">${doorstopError}</p>`;
-
-  if (fullPasses === 0 && !partialResult) {
+  if (oversized.length)  html += `<p class="warn-text">⚠️ ${oversized.join(', ')} excluded — exceed max individual mass.</p>`;
+  if (doorstopError)     html += `<p class="warn-text">${doorstopError}</p>`;
+  if (trips.length === 0 && !isDoorstop) {
     html += `<p class="warn-text">⚠️ Wormhole is already at or below the target mass.</p>`;
   }
 
-  // Step: full passes (all ships cold out + hot back)
-  if (fullPasses > 0) {
-    stepNum++;
-    const afterFull = startMass - fullPasses * massPerPassCH;
-    html += `<div class="pass full-pass">
-      <div class="pass-title">Step ${stepNum} — Full Fleet × ${fullPasses} Pass${fullPasses !== 1 ? 'es' : ''}</div>
-      <ul>`;
-    for (const [type, count] of Object.entries(validFleet)) {
-      const perShip = JumpMass[type].cold + JumpMass[type].hot;
-      html += `<li>${count}× ${type} — COLD out + HOT back = ${fmt(perShip)} t each (${fmt(count * perShip)} t)</li>`;
-    }
-    html += `<li><strong>Per pass: ${fmt(massPerPassCH)} t × ${fullPasses} = ${fmt(fullPasses * massPerPassCH)} t consumed</strong></li>
-      </ul>
-      <p class="mass-note">After all full passes: <strong>${fmt(afterFull)} t</strong> remaining (${pct(afterFull, w.totalMass)}%)</p>
-    </div>`;
-  }
+  // ── Step list ──
+  let stepNum       = 0;
+  let massRemaining = startMass;
 
-  // Step: partial pass (calibrated cold/hot per leg)
-  if (partialResult) {
-    stepNum++;
-    html += `<div class="pass partial-pass">
-      <div class="pass-title">Step ${stepNum} — Calibrated Pass</div>
-      <ul>
-        ${renderAssignmentRows(validFleet, partialResult.assignments)}
-        <li><strong>Total this pass: ${fmt(partialResult.actualMass)} t consumed</strong></li>
-      </ul>
-      <p class="mass-note">After this pass: <strong>${fmt(remaining)} t</strong> remaining (${pct(remaining, w.totalMass)}%)</p>
-    </div>`;
-  }
+  if (trips.length > 0) {
+    html += `<ol class="step-list">`;
 
-  // Step: doorstop
-  if (useDoorstop && doorstopType && !doorstopError) {
-    stepNum++;
-    const collapseOnReturn = doorstopCold >= afterDoorstop;
-    html += `<div class="pass doorstop-pass">
-      <div class="pass-title">Step ${stepNum} — Doorstop (${doorstopType})</div>
-      <p>1× ${doorstopType} jumps <strong>COLD in</strong> and stays on the far side. All other ships have already returned.</p>
-      <p class="mass-note">After doorstop: <strong>${fmt(afterDoorstop)} t</strong> remaining (${pct(afterDoorstop, w.totalMass)}%) — wormhole is now critical.</p>
-      <p class="doorstop-close"><strong>To close:</strong> when ready, the doorstop ${doorstopType} jumps COLD back to the origin side.</p>
-      ${collapseOnReturn
-        ? `<p class="success-text">✅ Its cold return (${fmt(doorstopCold)} t) will collapse the wormhole.</p>`
-        : `<p class="warn-text">⚠️ Its cold return (${fmt(doorstopCold)} t) alone may not collapse the wormhole (${fmt(afterDoorstop)} t remaining). You may need one more ship to assist.</p>`
+    for (let i = 0; i < trips.length; i++) {
+      const trip       = trips[i];
+      const mIn        = JumpMass[trip.type][trip.inMode];
+      const mOut       = JumpMass[trip.type][trip.outMode];
+      const isLast     = i === trips.length - 1;
+      const typeClass  = trip.passType === 'calibrated' ? 'step-calibrated' : 'step-full';
+
+      const fracBefore   = massRemaining / totalMass;
+      const massAfterIn  = massRemaining - mIn;
+      const fracAfterIn  = massAfterIn  / totalMass;
+      const massAfterOut = massAfterIn  - mOut;
+      const fracAfterOut = massAfterOut / totalMass;
+
+      // ── IN jump ──
+      stepNum++;
+      const inCollapses = massAfterIn <= 0;
+
+      html += `<li class="step ${typeClass}${inCollapses ? ' step-danger' : ''}">
+        <div class="step-header">
+          <span class="step-num">${stepNum}</span>
+          <span class="step-desc">
+            <strong>${trip.type}</strong>
+            <span class="mode-badge mode-${trip.inMode}">${trip.inMode.toUpperCase()}</span>
+            <span class="dir-in">→ Jump IN</span>
+            <span class="step-mass">(${fmt(mIn)} t)</span>
+          </span>
+          ${trip.passType === 'calibrated' ? '<span class="badge-calibrated">calibrated</span>' : ''}
+        </div>`;
+
+      if (inCollapses) {
+        html += `<div class="step-check">
+          <p class="check-danger">🚨 This outbound jump would collapse the wormhole — ship would be <strong>stranded on the far side</strong>. Do not jump. Reduce the previous rolling steps.</p>
+        </div>`;
+      } else {
+        html += `<div class="step-check">
+          <strong>Check status before returning:</strong>
+          <ul>
+            <li class="check-ok">✅ Still <span class="${statusClass(fracBefore)}">${statusLabel(fracBefore)}</span> → proceed to Step ${stepNum + 1} (return)</li>`;
+
+        if (fracBefore >= 0.5 && fracAfterIn < 0.5) {
+          html += `<li class="check-warn">⚠️ Now <span class="status-unstable">Unstable</span> → return <strong>COLD</strong>, then reassess remaining ships</li>`;
+        }
+        if (fracAfterIn < 0.1 && fracAfterIn > 0) {
+          html += `<li class="check-warn">⚠️ Now <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all other ships, skip to closure</li>`;
+        }
+        html += `<li class="check-warn">⚠️ Dropped a tier unexpectedly → return <strong>COLD</strong> and reassess before sending more ships</li>
+          </ul>
+        </div>`;
       }
+      html += `</li>`;
+
+      // ── OUT jump ──
+      stepNum++;
+      const outCollapses  = massAfterOut <= 0 && goal === 'close';
+      const critOnReturn  = fracAfterOut < 0.1 && fracAfterOut > 0;
+
+      html += `<li class="step ${typeClass} step-return${outCollapses ? ' step-close' : ''}">
+        <div class="step-header">
+          <span class="step-num">${stepNum}</span>
+          <span class="step-desc">
+            <strong>${trip.type}</strong>
+            <span class="mode-badge mode-${trip.outMode}">${trip.outMode.toUpperCase()}</span>
+            <span class="dir-out">← Return OUT</span>
+            <span class="step-mass">(${fmt(mOut)} t)</span>
+          </span>
+          ${outCollapses ? '<span class="badge-close">CLOSES HOLE</span>' : ''}
+        </div>`;
+
+      if (outCollapses) {
+        html += `<div class="step-check">
+          <p class="check-ok">✅ This return jump collapses the wormhole — ship arrives safely in the origin system.</p>
+        </div>`;
+      } else {
+        html += `<div class="step-check">
+          <strong>After return — check status:</strong>
+          <ul>
+            <li class="check-ok">✅ <span class="${statusClass(fracAfterOut)}">${statusLabel(fracAfterOut)}</span>${isLast ? ' — all ships back, proceed to closure' : ` — continue to Step ${stepNum + 1}`}</li>`;
+        if (critOnReturn) {
+          html += `<li class="check-warn">⚠️ Now <span class="status-critical">Critical</span> — do not send more rolling ships, proceed to closure</li>`;
+        }
+        html += `</ul></div>`;
+      }
+      html += `</li>`;
+
+      massRemaining = massAfterOut;
+    }
+
+    html += `</ol>`;
+  }
+
+  // ── Doorstop step ──
+  if (isDoorstop && doorstopType && !doorstopError) {
+    const collapseOnReturn = doorstopCold >= afterDoorstop;
+    stepNum++;
+    html += `<div class="closure-section doorstop-pass">
+      <div class="pass-title">Step ${stepNum} — Send Doorstop (${doorstopType} COLD IN)</div>
+      <p>1× ${doorstopType} jumps <strong>COLD in</strong> and stays on the far side. All other ships have already returned.</p>
+      <p class="mass-note">After this jump: ~${fmt(afterDoorstop)} t remaining (${pct(afterDoorstop, totalMass)}%) — wormhole should now be Critical.</p>
+    </div>`;
+
+    html += `<div class="closure-section">
+      <h3>Closure</h3>
+      <ol class="step-list">
+        <li class="step step-closure">
+          <div class="step-header">
+            <span class="step-num">✦</span>
+            <span class="step-desc">Confirm all ships <strong>except the doorstop</strong> are on the origin side</span>
+          </div>
+        </li>
+        <li class="step step-closure step-close">
+          <div class="step-header">
+            <span class="step-num">✦</span>
+            <span class="step-desc">
+              Doorstop <strong>${doorstopType}</strong>
+              <span class="mode-badge mode-cold">COLD</span>
+              <span class="dir-in">← jumps back to origin</span>
+            </span>
+            <span class="badge-close">CLOSES HOLE</span>
+          </div>
+          <div class="step-check">
+            ${collapseOnReturn
+              ? `<p class="check-ok">✅ Cold return (${fmt(doorstopCold)} t) will collapse the wormhole — ship arrives safely in origin.</p>`
+              : `<p class="check-warn">⚠️ Cold return (${fmt(doorstopCold)} t) may not be enough to collapse (${fmt(afterDoorstop)} t remaining). Send a second ship cold immediately after.</p>`
+            }
+          </div>
+        </li>
+      </ol>
+    </div>`;
+
+  } else if (goal !== 'close' || remaining > 0) {
+    // Standard closure section
+    const finalMass   = remaining;
+    const goalReached = finalMass <= goalMass;
+
+    html += `<div class="closure-section">
+      <h3>Closure</h3>
+      <ol class="step-list">
+        <li class="step step-closure">
+          <div class="step-header">
+            <span class="step-num">✦</span>
+            <span class="step-desc">Confirm all ships are back on the <strong>origin side</strong></span>
+          </div>
+        </li>
+        <li class="step step-closure ${goal === 'close' ? 'step-close' : ''}">
+          <div class="step-header">
+            <span class="step-num">✦</span>
+            <span class="step-desc">
+              Wormhole should show as
+              <span class="${goalReached ? 'status-critical' : 'status-unstable'}">${goalReached ? 'Critical' : 'check status'}</span>
+            </span>
+            ${goal === 'close' ? '<span class="badge-close">CLOSES HOLE</span>' : ''}
+          </div>
+          <div class="step-check">
+            ${goal === 'close' && goalReached
+              ? `<p class="check-ok">✅ Send one final ship COLD in — the outbound jump will collapse the wormhole and the ship returns safely to origin.</p>`
+              : goal === 'crit' && goalReached
+                ? `<p class="check-ok">✅ Wormhole is Critical. You can leave it to expire or send one ship cold in to collapse it.</p>`
+                : `<p class="check-warn">⚠️ Plan may not have fully reached the goal (${fmt(Math.max(0, finalMass))} t remaining). Check actual status and continue rolling if needed.</p>`
+            }
+          </div>
+        </li>
+      </ol>
     </div>`;
   }
 
-  // Final summary
-  const finalMass   = (useDoorstop && !doorstopError) ? afterDoorstop : remaining;
-  const goalReached = finalMass <= goalMass;
-
-  html += `<div class="final-result ${goalReached ? 'success' : 'warning'}">
-    <strong>Wormhole after plan: ${fmt(Math.max(0, finalMass))} t (${pct(Math.max(0, finalMass), w.totalMass)}%)</strong>`;
-
-  if (!useDoorstop) {
-    if (finalMass <= 0 && goal === 'close') {
-      html += `<p>✅ Wormhole will collapse.</p>`;
-    } else if (goalReached && goal === 'crit') {
-      html += `<p>✅ Wormhole in critical state — ready for final collapse.</p>`;
-    } else if (finalMass <= 0 && goal === 'crit') {
-      html += `<p>⚠️ Plan may accidentally collapse the wormhole. Reduce the calibrated pass by one ship.</p>`;
-    }
-  }
-
-  html += `</div></div>`;
+  html += `</div>`; // close plan-box
   output.innerHTML = html;
 }
 

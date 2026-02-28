@@ -32,23 +32,19 @@
           <select id="wormhole-goal">
             <option value="crit">Crit – get to &lt;10% mass</option>
             <option value="close">Close – fully collapse</option>
+            <option value="doorstop">Doorstop – crit and leave a ship to close later</option>
           </select>
         </label>
 
         <div id="doorstop-section" class="hidden">
-          <label class="checkbox-label">
-            <input type="checkbox" id="use-doorstop"/>
-            Leave a doorstop ship on the far side
+          <label>Doorstop Ship Type:
+            <select id="doorstop-ship">
+              <option value="Battleship">Battleship</option>
+              <option value="Cruiser">Cruiser</option>
+              <option value="HIC">HIC</option>
+              <option value="Custom">Custom</option>
+            </select>
           </label>
-          <div id="doorstop-ship-wrap" class="hidden indent">
-            <label>Doorstop Ship Type:
-              <select id="doorstop-ship">
-                <option value="Battleship">Battleship</option>
-                <option value="Cruiser">Cruiser</option>
-                <option value="HIC">HIC</option>
-              </select>
-            </label>
-          </div>
         </div>
 
         <h2>Your Fleet</h2>
@@ -73,6 +69,21 @@
               <span class="ship-stats">cold 830 t / hot 132,400 t</span>
             </span>
             <input type="number" id="fleet-hic" min="0" value="0" class="fleet-input"/>
+          </div>
+          <div class="fleet-row custom-row">
+            <span class="ship-label">
+              Custom Ship
+              <span class="ship-stats">set your own cold / hot mass</span>
+            </span>
+            <input type="number" id="fleet-custom" min="0" value="0" class="fleet-input"/>
+          </div>
+          <div id="custom-mass-row" class="custom-mass-row hidden">
+            <label>Cold mass (t):
+              <input type="number" id="custom-cold" min="0" value="0"/>
+            </label>
+            <label>Hot mass (t):
+              <input type="number" id="custom-hot" min="0" value="0"/>
+            </label>
           </div>
         </div>
 
