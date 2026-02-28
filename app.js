@@ -30,11 +30,12 @@ function init() {
 }
 
 function onWHInput() {
-  const val = document.getElementById('wormhole-input').value.trim().toUpperCase();
-  const w   = wormholes.find(w => w.type === val);
-  document.getElementById('wormhole-details').classList.toggle('hidden', !w);
+  const val   = document.getElementById('wormhole-input').value.trim().toUpperCase();
+  const w     = wormholes.find(w => w.type === val);
+  const valid = w && w.totalMass !== null;
+  document.getElementById('wormhole-details').classList.toggle('hidden', !valid);
   document.getElementById('plan-output').innerHTML = '';
-  if (w) {
+  if (valid) {
     document.getElementById('wormhole-info').textContent =
       `${w.from || '?'} → ${w.to || '?'} | Total: ${w.totalMass.toLocaleString()} t | Max individual: ${w.maxIndividualMass.toLocaleString()} t`;
   }
@@ -158,7 +159,7 @@ function onCalculate() {
   const isDoorstop   = goal === 'doorstop';
   const doorstopType = isDoorstop ? document.getElementById('doorstop-ship').value : null;
 
-  if (!w) {
+  if (!w || !w.totalMass) {
     output.innerHTML = '<div class="plan-box warning">❗ Select a valid wormhole first.</div>';
     return;
   }
