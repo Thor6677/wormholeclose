@@ -35,41 +35,52 @@
           </select>
         </label>
 
-        <button id="start-btn">Start</button>
-      </div>
-    </section>
-
-    <section id="mass-tracker" class="hidden">
-      <h2>Mass Tracker</h2>
-
-      <div class="mass-display">
-        <span id="remaining-mass">–</span> t
-        &nbsp;(<span id="remaining-pct">–</span>%)
-      </div>
-      <div class="progress-bar-wrap">
-        <div id="progress-bar" class="progress-bar"></div>
-      </div>
-      <p id="goal-label" class="goal-label"></p>
-
-      <div class="ship-controls">
-        <label>Ship Type:
-          <select id="ship-type">
-            <option value="Battleship">Battleship – cold 200,000 t / hot 300,000 t</option>
-            <option value="Cruiser">Cruiser – cold 36,000 t / hot 126,000 t</option>
-            <option value="HIC">HIC – cold 830 t / hot 132,400 t</option>
-          </select>
-        </label>
-
-        <div class="jump-buttons">
-          <button id="jump-in-btn">Jump In (Cold)</button>
-          <button id="jump-out-btn">Jump Out (Hot)</button>
-          <button id="undo-btn" class="secondary">Undo</button>
+        <div id="doorstop-section" class="hidden">
+          <label class="checkbox-label">
+            <input type="checkbox" id="use-doorstop"/>
+            Leave a doorstop ship on the far side
+          </label>
+          <div id="doorstop-ship-wrap" class="hidden indent">
+            <label>Doorstop Ship Type:
+              <select id="doorstop-ship">
+                <option value="Battleship">Battleship</option>
+                <option value="Cruiser">Cruiser</option>
+                <option value="HIC">HIC</option>
+              </select>
+            </label>
+          </div>
         </div>
-      </div>
 
-      <button id="calc-btn">Calculate Plan</button>
-      <div id="plan-output"></div>
+        <h2>Your Fleet</h2>
+        <div class="fleet-grid">
+          <div class="fleet-row">
+            <span class="ship-label">
+              Battleships
+              <span class="ship-stats">cold 200,000 t / hot 300,000 t</span>
+            </span>
+            <input type="number" id="fleet-battleship" min="0" value="0" class="fleet-input"/>
+          </div>
+          <div class="fleet-row">
+            <span class="ship-label">
+              Cruisers
+              <span class="ship-stats">cold 36,000 t / hot 126,000 t</span>
+            </span>
+            <input type="number" id="fleet-cruiser" min="0" value="0" class="fleet-input"/>
+          </div>
+          <div class="fleet-row">
+            <span class="ship-label">
+              HICs
+              <span class="ship-stats">cold 830 t / hot 132,400 t</span>
+            </span>
+            <input type="number" id="fleet-hic" min="0" value="0" class="fleet-input"/>
+          </div>
+        </div>
+
+        <button id="calc-btn">Calculate Plan</button>
+      </div>
     </section>
+
+    <div id="plan-output"></div>
   </div>
 
   <script type="module" src="app.js"></script>
