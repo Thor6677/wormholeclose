@@ -251,6 +251,101 @@ button:hover { background: #0cc; }
 }
 .mass-note { color: #aaa; font-size: 13px; margin: 4px 0 0; }
 
+/* ── Step navigator ── */
+.step-nav {
+  margin-top: 16px;
+  border-top: 1px solid #444;
+  padding-top: 14px;
+}
+
+.step-nav-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.step-of-label {
+  color: #aaa;
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.step-title-display {
+  color: #0ff;
+  font-weight: bold;
+  font-size: 14px;
+}
+
+.step-dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-bottom: 14px;
+}
+
+.step-dot {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 2px solid #444;
+  background: #333;
+  cursor: pointer;
+  padding: 0;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.step-dot:hover {
+  border-color: #888;
+  background: #555;
+}
+
+.step-dot.done {
+  background: #0a4a3a;
+  border-color: #0a8;
+}
+
+.step-dot.active {
+  background: #0ff;
+  border-color: #0ff;
+  box-shadow: 0 0 6px #0ff8;
+}
+
+.step-content {
+  margin-bottom: 14px;
+}
+
+.step-controls {
+  display: flex;
+  gap: 10px;
+}
+
+.nav-btn {
+  flex: 1;
+  padding: 10px 20px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: bold;
+  cursor: pointer;
+  background: #333;
+  color: #eee;
+  margin-top: 0;
+  width: auto;
+  transition: background 0.15s, color 0.15s;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: #0ff;
+  color: #111;
+}
+
+.nav-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+
 /* ── Misc ── */
 .warn-text { color: #fa0; font-size: 13px; }
 .success-text { color: #0f0; }
