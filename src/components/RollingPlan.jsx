@@ -104,6 +104,23 @@ function StepRow({ step, index, goal }) {
   );
 }
 
+function HoldBackRow({ item }) {
+  const names = (item.sittingOut ?? []).map(s => `${s.pilotName} (${s.shipClass})`).join(' · ');
+  return (
+    <div className="flex items-start gap-3 px-4 py-3 bg-blue-950/20 border-y border-blue-600/30">
+      <span className="text-slate-400 text-xs font-mono w-5 text-center shrink-0 mt-0.5">—</span>
+      <span className="text-blue-400 text-base shrink-0 mt-0.5">⏸</span>
+      <div className="flex-1 min-w-0">
+        <div className="text-blue-300 text-sm font-semibold">Hold Back — subset pass</div>
+        <div className="text-slate-400 text-xs mt-0.5 leading-relaxed">{item.reason}</div>
+        {names && (
+          <div className="text-slate-500 text-xs mt-1">Sitting out: {names}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function AssessmentRow({ item }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3 bg-slate-700/30 border-y border-slate-600/40">
@@ -236,6 +253,7 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
                 const idx = stepIndex++;
                 return <StepRow key={item.id} step={item} index={idx} goal={goal} />;
               }
+              if (item.type === 'hold-back')       return <HoldBackRow       key={item.id} item={item} />;
               if (item.type === 'assessment')     return <AssessmentRow     key={item.id} item={item} />;
               if (item.type === 'doorstop-marker') return <DoorstopMarkerRow key={item.id} item={item} />;
               if (item.type === 'outcome')         return <OutcomeRow        key={item.id} item={item} />;

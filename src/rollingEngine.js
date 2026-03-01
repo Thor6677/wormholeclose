@@ -20,6 +20,9 @@
  *
  *   { type: 'outcome', id, result: 'collapsed'|'critical'|'doorstop_active' }
  *
+ *   { type: 'hold-back', id, passNumber, sittingOut: Ship[], reason }
+ *     → Shown before a subset pass: which ships are held out this pass and why.
+ *
  * ─── Assessment answers ─────────────────────────────────────────────────────
  *   'not_reduced' — WH still looks fresh (>50% mass remaining)
  *   'reduced'     — WH is visually reduced  (≤50% remaining ≈ ≥50% consumed)
@@ -216,6 +219,82 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
   };
 }
 
+// ─── Fleet safety helpers ─────────────────────────────────────────────────────
+
+/**
+ * Worst-case mass a single ship contributes to a cold round trip.
+ *   Non-HIC: (coldIn × 1.1) + (coldBack × 1.1) = coldMass × 2.2
+ *   HIC:     (coldIn × 1.1) + (hotBack × 1.1)  — HIC always returns MWD hot
+ */
+function _roundTripWorstCase(ship) {
+  if (_isHic(ship)) return Math.round((ship.coldMass + ship.hotMass) * 1.1);
+  return Math.round(ship.coldMass * 2 * 1.1);
+}
+
+/**
+ * Test whether the given fleet can complete a full cold round trip safely.
+ *
+ * "Safe" = total worst-case mass (all cold in + all cold back, each ×1.1)
+ * does NOT reach wormhole.totalMass.  If the sum stays below the cap, no
+ * ship can be stranded regardless of jump ordering.
+ *
+ * HICs use their near-zero coldMass on entry and their hotMass on return
+ * (physics-forced — they always come back MWD hot).
+ *
+ * Returns { safe: boolean, totalWorstCase: number, reason: string }
+ */
+export function evaluateFullFleetSafety(fleet, runningTotal, wormhole) {
+  const target = wormhole.totalMass;
+  let totalWorstCase = runningTotal;
+  for (const ship of fleet) totalWorstCase += _roundTripWorstCase(ship);
+
+  const safe = totalWorstCase < target;
+  return {
+    safe,
+    totalWorstCase,
+    reason: safe
+      ? `Full-fleet cold round trip worst-case ${formatMass(totalWorstCase)} < ${formatMass(target)} — safe`
+      : `Full-fleet cold round trip worst-case ${formatMass(totalWorstCase)} ≥ ${formatMass(target)} — would collapse`,
+  };
+}
+
+/**
+ * Find the largest subset of fleet that can safely complete a cold round trip.
+ *
+ * Iteratively removes the ship with the highest round-trip mass contribution
+ * (non-HICs by 2×coldMass, HICs by coldMass+hotMass) until
+ * evaluateFullFleetSafety returns true for the remaining group.
+ *
+ * Returns { subset: Ship[], sittingOut: Ship[], reason: string }
+ */
+export function findLargestSafeSubset(fleet, runningTotal, wormhole) {
+  // Sort by round-trip contribution descending — heaviest contributor removed first
+  const byContrib = [...fleet].sort((a, b) => _roundTripWorstCase(b) - _roundTripWorstCase(a));
+
+  for (let remove = 1; remove < byContrib.length; remove++) {
+    const sittingOut = byContrib.slice(0, remove);
+    const subset     = byContrib.slice(remove);
+    if (evaluateFullFleetSafety(subset, runningTotal, wormhole).safe) {
+      const names = sittingOut.map(s => s.pilotName).join(', ');
+      return {
+        subset,
+        sittingOut,
+        reason: `Sending full fleet would risk stranding pilots on the final return. ` +
+                `Sending ${subset.length} ship${subset.length !== 1 ? 's' : ''} this pass — ` +
+                `re-evaluating after. Sitting out: ${names}.`,
+      };
+    }
+  }
+
+  // Only 1 ship left (or all are unsafe — shouldn't happen in practice)
+  const lightest = byContrib[byContrib.length - 1];
+  return {
+    subset:     [lightest],
+    sittingOut: byContrib.slice(0, byContrib.length - 1),
+    reason:     `Only 1 ship can safely go — full-fleet cold round trip exceeds mass budget.`,
+  };
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
@@ -346,10 +425,14 @@ export function generateClosingStep(ship, currentRunningTotal, wormhole) {
 /**
  * Build plan items starting from estimatedConsumed.
  *
- * Strategy:
- *   - Try to complete the goal in one "final pass" (greedy hot-first Phase 1 + Phase 2).
- *   - If that fails, generate an intermediate pass followed by an assessment
- *     checkpoint, then try again.
+ * Strategy per pass:
+ *   1. SWITCHOVER TEST — can the full eligible fleet complete a cold round trip
+ *      without collapse?  If yes → use full fleet.  If no → find the largest
+ *      safe subset (greedy removal of heaviest round-trip contributors).
+ *   2. Try to finish the goal in this pass with the chosen fleet.
+ *      If that succeeds → done.
+ *   3. Otherwise run a safe intermediate pass (all ships in + all ships home).
+ *      Insert an assessment checkpoint and repeat.
  *   - Repeat up to 10 passes.
  */
 function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, warnings) {
@@ -372,9 +455,31 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
   while (runningTotal < goalThreshold && passNumber < 10) {
     passNumber++;
 
+    // ── SWITCHOVER TEST ──────────────────────────────────────────────────────
+    // Re-evaluated every pass against the full eligible fleet.
+    let passFleet  = eligible;
+    let sittingOut = [];
+
+    const safety = evaluateFullFleetSafety(eligible, runningTotal, wormhole);
+    if (!safety.safe) {
+      const subsetResult = findLargestSafeSubset(eligible, runningTotal, wormhole);
+      passFleet  = subsetResult.subset;
+      sittingOut = subsetResult.sittingOut;
+
+      // Emit hold-back notice before this pass's steps
+      if (sittingOut.length > 0) {
+        allItems.push({
+          type: 'hold-back', id: uid(), passNumber,
+          sittingOut, reason: subsetResult.reason,
+        });
+      }
+    }
+
+    if (passFleet.length === 0) break; // safety guard — shouldn't occur
+
     // ── Try to finish in this pass ───────────────────────────────────────────
     const finalResult = _tryFinalPass(
-      eligible, runningTotal, target, goalThreshold,
+      passFleet, runningTotal, target, goalThreshold,
       wormhole.maxIndividualMass, goal, doorstopShip, wormhole,
     );
 
@@ -385,8 +490,8 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
       return { items: allItems, canReachGoal: true };
     }
 
-    // ── Intermediate pass: all ships in, all ships out ───────────────────────
-    const intResult = _intermediatePass(eligible, runningTotal, wormhole, goal);
+    // ── Intermediate pass with the safety-approved fleet ─────────────────────
+    const intResult = _intermediatePass(passFleet, runningTotal, wormhole, goal);
     allItems.push(...intResult.items);
 
     if (!intResult.ok) {
@@ -404,7 +509,7 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
       if (warnings) {
         warnings.push({
           id: uid(), type: 'insufficient',
-          message: 'An intermediate pass would collapse the wormhole before all ships are home. Reduce fleet size or switch goal.',
+          message: 'An intermediate pass collapsed unexpectedly — safety check may have underestimated mass. Reduce fleet size.',
         });
       }
       break;

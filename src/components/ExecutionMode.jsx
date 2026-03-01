@@ -306,6 +306,62 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
     );
   }
 
+  // ── Hold-back screen ────────────────────────────────────────────────────────
+  if (itemType === 'hold-back') {
+    const heldBack = item.sittingOut ?? [];
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+        <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between shrink-0">
+          <span className="text-slate-500 font-mono text-sm">{wormhole.type}</span>
+          <button
+            onClick={() => setCurrentIdx(i => Math.max(0, i - 1))}
+            disabled={currentIdx === 0}
+            className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-300 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            ← Back
+          </button>
+        </div>
+
+        <div className="flex-1 flex flex-col px-4 py-4 gap-3">
+          <div>
+            <MassProgressBar current={massConsumedSoFar} total={wormhole.totalMass} />
+            <div className="flex justify-between text-xs text-slate-600 mt-1 font-mono">
+              <span>{formatMass(massConsumedSoFar)}</span>
+              <span>{formatMass(wormhole.totalMass)}</span>
+            </div>
+          </div>
+
+          <div className="flex-1 flex flex-col items-center justify-center gap-5 py-6">
+            <div className="text-5xl">⏸</div>
+            <div className="text-center">
+              <h2 className="text-2xl font-bold text-blue-300 mb-2">Hold Back</h2>
+              <p className="text-slate-400 text-sm max-w-sm leading-relaxed">{item.reason}</p>
+            </div>
+
+            {heldBack.length > 0 && (
+              <div className="w-full max-w-xs space-y-2">
+                <div className="text-xs text-slate-500 uppercase tracking-wider text-center mb-1">Sitting out this pass</div>
+                {heldBack.map(s => (
+                  <div key={s.id} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 flex items-center gap-2">
+                    <span className="text-slate-300 text-sm font-medium">{s.pilotName}</span>
+                    <span className="text-slate-600 text-xs">{s.shipClass}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <button
+              onClick={() => setCurrentIdx(i => i + 1)}
+              className="w-full max-w-xs py-4 rounded-xl font-semibold text-slate-900 bg-blue-400 hover:bg-blue-300 active:bg-blue-500 transition-colors"
+            >
+              Continue →
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // ── Step screen ─────────────────────────────────────────────────────────────
   const step     = item;
   const isIn       = step.direction === 'in';
