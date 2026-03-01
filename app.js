@@ -14,6 +14,10 @@ const STATUS_MAX = { stable: 1.0, unstable: 0.5, critical: 0.1 };
 // 'doorstop' uses same target as 'crit' — rolling stops at crit, then doorstop handles close
 const GOAL_TARGET = { crit: 0.1, close: 0.0, doorstop: 0.1 };
 
+// Step navigator state
+let _planSteps = [];
+let _stepIndex = 0;
+
 function init() {
   const datalist = document.getElementById('wormhole-list');
   wormholes.forEach(w => {
@@ -207,7 +211,7 @@ function onCalculate() {
   const roundTripTarget   = (isDoorstop && !doorstopError) ? critMass + doorstopCold : goalMass;
   const massForRoundTrips = Math.max(0, startMass - roundTripTarget);
 
-  // Full passes: standard cold-out + hot-back
+  // Full passes: standard cold-in + hot-out
   const massPerPassCH = Object.entries(validFleet)
     .reduce((s, [t, c]) => s + c * (JumpMass[t].cold + JumpMass[t].hot), 0);
 
@@ -223,8 +227,8 @@ function onCalculate() {
 
   const trips = buildRoundTrips(validFleet, fullPasses, partialResult);
 
-  // ── Render ──
-  let html = `<div class="plan-box">
+  // ── Build header HTML ──
+  let headerHtml = `
     <h3>${w.type} — ${capitalize(status)} → ${goal === 'crit' ? 'Crit' : goal === 'close' ? 'Close' : 'Doorstop'}</h3>
     <div class="plan-stats">
       <span>Worst-case start: <strong>${fmt(startMass)} t</strong></span>
@@ -234,192 +238,267 @@ function onCalculate() {
     <p class="note">⚠️ The wormhole may already be closer to ${status === 'stable' ? 'Unstable' : status === 'unstable' ? 'Critical' : 'collapse'} than the worst case assumed.
     Check status after <strong>every jump in</strong> before committing to the return.</p>`;
 
-  if (oversized.length)  html += `<p class="warn-text">⚠️ ${oversized.join(', ')} excluded — exceed max individual mass.</p>`;
-  if (doorstopError)     html += `<p class="warn-text">${doorstopError}</p>`;
+  if (oversized.length)  headerHtml += `<p class="warn-text">⚠️ ${oversized.join(', ')} excluded — exceed max individual mass.</p>`;
+  if (doorstopError)     headerHtml += `<p class="warn-text">${doorstopError}</p>`;
   if (trips.length === 0 && !isDoorstop) {
-    html += `<p class="warn-text">⚠️ Wormhole is already at or below the target mass.</p>`;
+    headerHtml += `<p class="warn-text">⚠️ Wormhole is already at or below the target mass.</p>`;
   }
 
-  // ── Step list ──
+  // ── Build steps array ──
+  const steps = [];
   let stepNum       = 0;
   let massRemaining = startMass;
 
-  if (trips.length > 0) {
-    html += `<ol class="step-list">`;
+  for (let i = 0; i < trips.length; i++) {
+    const trip      = trips[i];
+    const mIn       = JumpMass[trip.type][trip.inMode];
+    const mOut      = JumpMass[trip.type][trip.outMode];
+    const isLast    = i === trips.length - 1;
+    const typeClass = trip.passType === 'calibrated' ? 'step-calibrated' : 'step-full';
 
-    for (let i = 0; i < trips.length; i++) {
-      const trip       = trips[i];
-      const mIn        = JumpMass[trip.type][trip.inMode];
-      const mOut       = JumpMass[trip.type][trip.outMode];
-      const isLast     = i === trips.length - 1;
-      const typeClass  = trip.passType === 'calibrated' ? 'step-calibrated' : 'step-full';
+    const massAfterIn  = massRemaining - mIn;
+    const fracAfterIn  = massAfterIn  / totalMass;
+    const massAfterOut = massAfterIn  - mOut;
+    const fracAfterOut = massAfterOut / totalMass;
 
-      const fracBefore   = massRemaining / totalMass;
-      const massAfterIn  = massRemaining - mIn;
-      const fracAfterIn  = massAfterIn  / totalMass;
-      const massAfterOut = massAfterIn  - mOut;
-      const fracAfterOut = massAfterOut / totalMass;
+    // ── IN jump step ──
+    stepNum++;
+    const inCollapses = massAfterIn <= 0;
 
-      // ── IN jump ──
-      stepNum++;
-      const inCollapses = massAfterIn <= 0;
+    let inHtml = `<div class="step ${typeClass}${inCollapses ? ' step-danger' : ''}">
+      <div class="step-header">
+        <span class="step-num">${stepNum}</span>
+        <span class="step-desc">
+          <strong>${trip.type}</strong>
+          <span class="mode-badge mode-${trip.inMode}">${trip.inMode.toUpperCase()}</span>
+          <span class="dir-in">→ Jump IN</span>
+          <span class="step-mass">(${fmt(mIn)} t)</span>
+        </span>
+        ${trip.passType === 'calibrated' ? '<span class="badge-calibrated">calibrated</span>' : ''}
+      </div>`;
 
-      html += `<li class="step ${typeClass}${inCollapses ? ' step-danger' : ''}">
-        <div class="step-header">
-          <span class="step-num">${stepNum}</span>
-          <span class="step-desc">
-            <strong>${trip.type}</strong>
-            <span class="mode-badge mode-${trip.inMode}">${trip.inMode.toUpperCase()}</span>
-            <span class="dir-in">→ Jump IN</span>
-            <span class="step-mass">(${fmt(mIn)} t)</span>
-          </span>
-          ${trip.passType === 'calibrated' ? '<span class="badge-calibrated">calibrated</span>' : ''}
-        </div>`;
+    if (inCollapses) {
+      inHtml += `<div class="step-check">
+        <p class="check-danger">🚨 This Jump IN would collapse the wormhole — ship would be <strong>stranded on the far side</strong>. Do not jump. Reduce the previous rolling steps.</p>
+      </div>`;
+    } else {
+      const expectedLabel = statusLabel(fracAfterIn);
+      const expectedClass = statusClass(fracAfterIn);
 
-      if (inCollapses) {
-        html += `<div class="step-check">
-          <p class="check-danger">🚨 This Jump IN would collapse the wormhole — ship would be <strong>stranded on the far side</strong>. Do not jump. Reduce the previous rolling steps.</p>
-        </div>`;
-      } else {
-        const expectedLabel = statusLabel(fracAfterIn);
-        const expectedClass = statusClass(fracAfterIn);
+      inHtml += `<div class="step-check">
+        <strong>After jumping in — check wormhole status:</strong>
+        <ul>
+          <li class="check-ok">✅ Shows <span class="${expectedClass}">${expectedLabel}</span> → proceed to the next step (return)</li>`;
 
-        html += `<div class="step-check">
-          <strong>After jumping in — check wormhole status:</strong>
-          <ul>
-            <li class="check-ok">✅ Shows <span class="${expectedClass}">${expectedLabel}</span> → proceed to Step ${stepNum + 1} (return)</li>`;
-
-        if (expectedLabel === 'Stable') {
-          html += `<li class="check-warn">⚠️ Shows <span class="status-unstable">Unstable</span> → return <strong>COLD</strong>, reassess remaining ships</li>`;
-          html += `<li class="check-warn">⚠️ Shows <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all ships, skip to closure</li>`;
-        } else if (expectedLabel === 'Unstable') {
-          html += `<li class="check-warn">⚠️ Shows <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all ships, skip to closure</li>`;
-        }
-        html += `</ul>
-        </div>`;
+      if (expectedLabel === 'Stable') {
+        inHtml += `<li class="check-warn">⚠️ Shows <span class="status-unstable">Unstable</span> → return <strong>COLD</strong>, reassess remaining ships</li>`;
+        inHtml += `<li class="check-warn">⚠️ Shows <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all ships, skip to closure</li>`;
+      } else if (expectedLabel === 'Unstable') {
+        inHtml += `<li class="check-warn">⚠️ Shows <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all ships, skip to closure</li>`;
       }
-      html += `</li>`;
-
-      // ── OUT jump ──
-      stepNum++;
-      const outCollapses  = massAfterOut <= 0 && goal === 'close';
-      const critOnReturn  = fracAfterOut < 0.1 && fracAfterOut > 0;
-
-      html += `<li class="step ${typeClass} step-return${outCollapses ? ' step-close' : ''}">
-        <div class="step-header">
-          <span class="step-num">${stepNum}</span>
-          <span class="step-desc">
-            <strong>${trip.type}</strong>
-            <span class="mode-badge mode-${trip.outMode}">${trip.outMode.toUpperCase()}</span>
-            <span class="dir-out">← Return OUT</span>
-            <span class="step-mass">(${fmt(mOut)} t)</span>
-          </span>
-          ${outCollapses ? '<span class="badge-close">CLOSES HOLE</span>' : ''}
-        </div>`;
-
-      if (outCollapses) {
-        html += `<div class="step-check">
-          <p class="check-ok">✅ This return jump collapses the wormhole — ship arrives safely in the origin system.</p>
-        </div>`;
-      } else {
-        html += `<div class="step-check">
-          <strong>After returning — check status:</strong>
-          <ul>`;
-        if (critOnReturn) {
-          html += `<li class="check-ok">✅ Now <span class="status-critical">Critical</span> — rolling complete, proceed to closure</li>`;
-          if (!isLast) {
-            html += `<li class="check-warn">⚠️ Hold all remaining ships — wormhole is Critical, no further rolling needed</li>`;
-          }
-        } else {
-          html += `<li class="check-ok">✅ <span class="${statusClass(fracAfterOut)}">${statusLabel(fracAfterOut)}</span>${isLast ? ' — all ships back, proceed to closure' : ` — continue to Step ${stepNum + 1}`}</li>`;
-        }
-        html += `</ul></div>`;
-      }
-      html += `</li>`;
-
-      massRemaining = massAfterOut;
+      inHtml += `</ul></div>`;
     }
+    inHtml += `</div>`;
 
-    html += `</ol>`;
+    steps.push({
+      num:   stepNum,
+      title: `${trip.type} ${trip.inMode.toUpperCase()} → Jump IN`,
+      html:  inHtml,
+    });
+
+    // ── OUT jump step ──
+    stepNum++;
+    const outCollapses = massAfterOut <= 0 && goal === 'close';
+    const critOnReturn = fracAfterOut < 0.1 && fracAfterOut > 0;
+
+    let outHtml = `<div class="step ${typeClass} step-return${outCollapses ? ' step-close' : ''}">
+      <div class="step-header">
+        <span class="step-num">${stepNum}</span>
+        <span class="step-desc">
+          <strong>${trip.type}</strong>
+          <span class="mode-badge mode-${trip.outMode}">${trip.outMode.toUpperCase()}</span>
+          <span class="dir-out">← Return OUT</span>
+          <span class="step-mass">(${fmt(mOut)} t)</span>
+        </span>
+        ${outCollapses ? '<span class="badge-close">CLOSES HOLE</span>' : ''}
+      </div>`;
+
+    if (outCollapses) {
+      outHtml += `<div class="step-check">
+        <p class="check-ok">✅ This return jump collapses the wormhole — ship arrives safely in the origin system.</p>
+      </div>`;
+    } else {
+      outHtml += `<div class="step-check">
+        <strong>After returning — check status:</strong>
+        <ul>`;
+      if (critOnReturn) {
+        outHtml += `<li class="check-ok">✅ Now <span class="status-critical">Critical</span> — rolling complete, proceed to closure</li>`;
+        if (!isLast) {
+          outHtml += `<li class="check-warn">⚠️ Hold all remaining ships — wormhole is Critical, no further rolling needed</li>`;
+        }
+      } else {
+        outHtml += `<li class="check-ok">✅ <span class="${statusClass(fracAfterOut)}">${statusLabel(fracAfterOut)}</span>${isLast ? ' — all ships back, proceed to closure' : ' — continue to next step'}</li>`;
+      }
+      outHtml += `</ul></div>`;
+    }
+    outHtml += `</div>`;
+
+    steps.push({
+      num:   stepNum,
+      title: `${trip.type} ${trip.outMode.toUpperCase()} ← Return OUT`,
+      html:  outHtml,
+    });
+
+    massRemaining = massAfterOut;
   }
 
   // ── Doorstop step ──
   if (isDoorstop && doorstopType && !doorstopError) {
-    const collapseOnReturn = doorstopCold >= afterDoorstop;
     stepNum++;
-    html += `<div class="closure-section doorstop-pass">
-      <div class="pass-title">Step ${stepNum} — Send Doorstop (${doorstopType} COLD IN)</div>
-      <p>1× ${doorstopType} jumps <strong>COLD in</strong> and stays on the far side. All other ships have already returned.</p>
-      <p class="mass-note">After this jump: ~${fmt(afterDoorstop)} t remaining (${pct(afterDoorstop, totalMass)}%) — wormhole should now be Critical.</p>
-    </div>`;
+    const collapseOnReturn = doorstopCold >= afterDoorstop;
 
-    html += `<div class="closure-section">
-      <h3>Closure</h3>
-      <ol class="step-list">
-        <li class="step step-closure">
-          <div class="step-header">
-            <span class="step-num">✦</span>
-            <span class="step-desc">Confirm all ships <strong>except the doorstop</strong> are on the origin side</span>
-          </div>
-        </li>
-        <li class="step step-closure step-close">
-          <div class="step-header">
-            <span class="step-num">✦</span>
-            <span class="step-desc">
-              Doorstop <strong>${doorstopType}</strong>
-              <span class="mode-badge mode-cold">COLD</span>
-              <span class="dir-in">← jumps back to origin</span>
-            </span>
-            <span class="badge-close">CLOSES HOLE</span>
-          </div>
-          <div class="step-check">
-            ${collapseOnReturn
-              ? `<p class="check-ok">✅ Cold return (${fmt(doorstopCold)} t) will collapse the wormhole — ship arrives safely in origin.</p>`
-              : `<p class="check-warn">⚠️ Cold return (${fmt(doorstopCold)} t) may not be enough to collapse (${fmt(afterDoorstop)} t remaining). Send a second ship cold immediately after.</p>`
-            }
-          </div>
-        </li>
-      </ol>
-    </div>`;
+    steps.push({
+      num:   stepNum,
+      title: `Send Doorstop — ${doorstopType} COLD IN`,
+      html:  `<div class="closure-section doorstop-pass" style="margin-top:0;border-top:none;">
+        <div class="pass-title">Step ${stepNum} — Send Doorstop (${doorstopType} COLD IN)</div>
+        <p>1× ${doorstopType} jumps <strong>COLD in</strong> and stays on the far side. All other ships have already returned.</p>
+        <p class="mass-note">After this jump: ~${fmt(afterDoorstop)} t remaining (${pct(afterDoorstop, totalMass)}%) — wormhole should now be Critical.</p>
+      </div>`,
+    });
+
+    steps.push({
+      title: 'Closure',
+      html: `<div class="closure-section" style="margin-top:0;border-top:none;">
+        <h3>Closure</h3>
+        <ol class="step-list">
+          <li class="step step-closure">
+            <div class="step-header">
+              <span class="step-num">✦</span>
+              <span class="step-desc">Confirm all ships <strong>except the doorstop</strong> are on the origin side</span>
+            </div>
+          </li>
+          <li class="step step-closure step-close">
+            <div class="step-header">
+              <span class="step-num">✦</span>
+              <span class="step-desc">
+                Doorstop <strong>${doorstopType}</strong>
+                <span class="mode-badge mode-cold">COLD</span>
+                <span class="dir-in">← jumps back to origin</span>
+              </span>
+              <span class="badge-close">CLOSES HOLE</span>
+            </div>
+            <div class="step-check">
+              ${collapseOnReturn
+                ? `<p class="check-ok">✅ Cold return (${fmt(doorstopCold)} t) will collapse the wormhole — ship arrives safely in origin.</p>`
+                : `<p class="check-warn">⚠️ Cold return (${fmt(doorstopCold)} t) may not be enough to collapse (${fmt(afterDoorstop)} t remaining). Send a second ship cold immediately after.</p>`
+              }
+            </div>
+          </li>
+        </ol>
+      </div>`,
+    });
 
   } else if (goal !== 'close' || remaining > 0) {
-    // Standard closure section
+    // ── Standard closure step ──
     const finalMass   = remaining;
     const goalReached = finalMass <= goalMass;
 
-    html += `<div class="closure-section">
-      <h3>Closure</h3>
-      <ol class="step-list">
-        <li class="step step-closure">
-          <div class="step-header">
-            <span class="step-num">✦</span>
-            <span class="step-desc">Confirm all ships are back on the <strong>origin side</strong></span>
-          </div>
-        </li>
-        <li class="step step-closure ${goal === 'close' ? 'step-close' : ''}">
-          <div class="step-header">
-            <span class="step-num">✦</span>
-            <span class="step-desc">
-              Wormhole should show as
-              <span class="${goalReached ? 'status-critical' : 'status-unstable'}">${goalReached ? 'Critical' : 'check status'}</span>
-            </span>
-            ${goal === 'close' ? '<span class="badge-close">CLOSES HOLE</span>' : ''}
-          </div>
-          <div class="step-check">
-            ${goal === 'close' && goalReached
-              ? `<p class="check-ok">✅ Send one final ship COLD in — the outbound jump will collapse the wormhole and the ship returns safely to origin.</p>`
-              : goal === 'crit' && goalReached
-                ? `<p class="check-ok">✅ Wormhole is Critical. You can leave it to expire or send one ship cold in to collapse it.</p>`
-                : `<p class="check-warn">⚠️ Plan may not have fully reached the goal (${fmt(Math.max(0, finalMass))} t remaining). Check actual status and continue rolling if needed.</p>`
-            }
-          </div>
-        </li>
-      </ol>
-    </div>`;
+    steps.push({
+      title: 'Closure',
+      html: `<div class="closure-section" style="margin-top:0;border-top:none;">
+        <h3>Closure</h3>
+        <ol class="step-list">
+          <li class="step step-closure">
+            <div class="step-header">
+              <span class="step-num">✦</span>
+              <span class="step-desc">Confirm all ships are back on the <strong>origin side</strong></span>
+            </div>
+          </li>
+          <li class="step step-closure ${goal === 'close' ? 'step-close' : ''}">
+            <div class="step-header">
+              <span class="step-num">✦</span>
+              <span class="step-desc">
+                Wormhole should show as
+                <span class="${goalReached ? 'status-critical' : 'status-unstable'}">${goalReached ? 'Critical' : 'check status'}</span>
+              </span>
+              ${goal === 'close' ? '<span class="badge-close">CLOSES HOLE</span>' : ''}
+            </div>
+            <div class="step-check">
+              ${goal === 'close' && goalReached
+                ? `<p class="check-ok">✅ Send one final ship COLD in — the outbound jump will collapse the wormhole and the ship returns safely to origin.</p>`
+                : goal === 'crit' && goalReached
+                  ? `<p class="check-ok">✅ Wormhole is Critical. You can leave it to expire or send one ship cold in to collapse it.</p>`
+                  : `<p class="check-warn">⚠️ Plan may not have fully reached the goal (${fmt(Math.max(0, finalMass))} t remaining). Check actual status and continue rolling if needed.</p>`
+              }
+            </div>
+          </li>
+        </ol>
+      </div>`,
+    });
   }
 
-  html += `</div>`; // close plan-box
-  output.innerHTML = html;
+  // ── Render step navigator ──
+  _planSteps = steps;
+  _stepIndex = 0;
+  renderPlan(headerHtml);
+}
+
+function renderPlan(headerHtml) {
+  const output = document.getElementById('plan-output');
+  const steps  = _planSteps;
+  const total  = steps.length;
+
+  if (total === 0) {
+    output.innerHTML = `<div class="plan-box">${headerHtml}</div>`;
+    return;
+  }
+
+  const dotsHtml = steps.map((s, i) =>
+    `<button class="step-dot${i === 0 ? ' active' : ''}" data-index="${i}" title="Step ${i + 1}: ${s.title}" aria-label="Go to step ${i + 1}"></button>`
+  ).join('');
+
+  output.innerHTML = `
+    <div class="plan-box">
+      ${headerHtml}
+      <div class="step-nav">
+        <div class="step-nav-header">
+          <span class="step-of-label">Step <strong id="step-num-display">1</strong> of ${total}</span>
+          <span id="step-title-display" class="step-title-display">${steps[0].title}</span>
+        </div>
+        <div class="step-dots" role="tablist" aria-label="Jump steps">${dotsHtml}</div>
+        <div id="step-content" class="step-content">${steps[0].html}</div>
+        <div class="step-controls">
+          <button id="prev-step" class="nav-btn" disabled>← Prev</button>
+          <button id="next-step" class="nav-btn"${total <= 1 ? ' disabled' : ''}>Next →</button>
+        </div>
+      </div>
+    </div>`;
+
+  document.getElementById('prev-step').addEventListener('click', () => goToStep(_stepIndex - 1));
+  document.getElementById('next-step').addEventListener('click', () => goToStep(_stepIndex + 1));
+  document.querySelectorAll('.step-dot').forEach(dot => {
+    dot.addEventListener('click', () => goToStep(parseInt(dot.dataset.index)));
+  });
+}
+
+function goToStep(index) {
+  if (index < 0 || index >= _planSteps.length) return;
+  _stepIndex = index;
+
+  const step  = _planSteps[index];
+  const total = _planSteps.length;
+
+  document.getElementById('step-content').innerHTML           = step.html;
+  document.getElementById('step-num-display').textContent     = index + 1;
+  document.getElementById('step-title-display').textContent   = step.title;
+  document.getElementById('prev-step').disabled               = index === 0;
+  document.getElementById('next-step').disabled               = index === total - 1;
+
+  document.querySelectorAll('.step-dot').forEach((dot, i) => {
+    dot.classList.toggle('active', i === index);
+    dot.classList.toggle('done',   i < index);
+  });
 }
 
 function fmt(n)       { return Math.round(n).toLocaleString(); }
