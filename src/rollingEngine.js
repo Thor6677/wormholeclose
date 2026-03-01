@@ -6,6 +6,36 @@
  *   Display: value / 1000 + "M"  (e.g. 300_000 → "300M")
  */
 
+/**
+ * Rolling goals — determines when the plan is "done".
+ *   close:    Fully collapse the wormhole (100% mass consumed)
+ *   crit:     Bring to critical mass (≥90% consumed, one jump from death)
+ *   doorstop: Bring to ~50% mass — keep it alive but weakened
+ */
+export const GOALS = {
+  close: {
+    label:       'Roll to Close',
+    shortLabel:  'Close',
+    description: 'Collapse and permanently seal the wormhole',
+    threshold:   1.0,
+    badge:       'COLLAPSES',
+  },
+  crit: {
+    label:       'Crit It',
+    shortLabel:  'Crit',
+    description: 'Bring to critical mass — ≥90% consumed, one jump from death',
+    threshold:   0.9,
+    badge:       'CRITTED',
+  },
+  doorstop: {
+    label:       'Door Stop It',
+    shortLabel:  'Doorstop',
+    description: 'Bring to ~50% mass — keep the hole alive but heavily rolled',
+    threshold:   0.5,
+    badge:       'DOORSTOP',
+  },
+};
+
 export const SHIP_CLASSES = {
   Battleship:    { hotMass: 300_000, coldMass: 200_000 },
   Orca:          { hotMass: 700_000, coldMass: 500_000 },
@@ -34,22 +64,27 @@ function uid() { return ++_idCounter; }
  *             Stop inbound if a jump collapses the WH (stranding detected).
  *
  *  Phase 2 — Greedy cold-first return pass.
- *             For each ship about to return: try cold.
- *             If cold + remaining ships' max-hot can still collapse → use cold.
+ *             Targets goalThreshold (determined by `goal`).
+ *             For each ship: try cold first.
+ *             If cold + remaining ships' max-hot can still reach goal → use cold.
  *             Otherwise → must use hot.
- *             The first return that pushes runningTotal >= totalMass is the collapse step.
+ *             Once goalThreshold is reached, remaining ships return cold.
+ *             The first step crossing goalThreshold is flagged isGoalStep=true.
  *
  * @param {object} wormhole  — from wormholes.js
  * @param {Array}  fleet     — [{id, pilotName, shipName, shipClass, hotMass, coldMass}]
- * @returns {{ steps, warnings, canCollapse }}
+ * @param {string} goal      — 'close' | 'crit' | 'doorstop'
+ * @returns {{ steps, warnings, canReachGoal, goal }}
  */
-export function generatePlan(wormhole, fleet) {
+export function generatePlan(wormhole, fleet, goal = 'close') {
   if (!wormhole || !fleet || fleet.length === 0) return null;
 
-  const target    = wormhole.totalMass;
-  const jumpLimit = wormhole.maxIndividualMass;
-  const warnings  = [];
-  const steps     = [];
+  const target        = wormhole.totalMass;
+  const jumpLimit     = wormhole.maxIndividualMass;
+  const goalConfig    = GOALS[goal] ?? GOALS.close;
+  const goalThreshold = Math.round(target * goalConfig.threshold);
+  const warnings      = [];
+  const steps         = [];
 
   // --- Validate each ship ---
   fleet.forEach(ship => {
@@ -85,19 +120,22 @@ export function generatePlan(wormhole, fleet) {
     .sort((a, b) => b.hotMass - a.hotMass); // heaviest hot-mass first
 
   if (eligible.length === 0) {
-    return { steps: [], warnings, canCollapse: false };
+    return { steps: [], warnings, canReachGoal: false, goal };
   }
 
   // --- Phase 1: Inbound ---
   let runningTotal = 0;
   const shipsInHole = [];
   let collapsedDuringInbound = false;
+  let goalReached = false;
 
   for (const ship of eligible) {
     const canHot        = ship.hotMass <= jumpLimit;
     const massThisJump  = canHot ? ship.hotMass : ship.coldMass;
     runningTotal       += massThisJump;
     const collapses     = runningTotal >= target;
+    const isGoalStep    = !goalReached && runningTotal >= goalThreshold;
+    if (isGoalStep) goalReached = true;
 
     steps.push({
       id:             `in-${ship.id}-${uid()}`,
@@ -107,6 +145,7 @@ export function generatePlan(wormhole, fleet) {
       massThisJump,
       runningTotal,
       collapses,
+      isGoalStep,
       isStrandingRisk: collapses,  // pilot is on far side when WH dies
     });
 
@@ -123,28 +162,36 @@ export function generatePlan(wormhole, fleet) {
   }
 
   if (collapsedDuringInbound) {
-    return { steps, warnings, canCollapse: true, collapsedDuringInbound: true };
+    return { steps, warnings, canReachGoal: true, goal, collapsedDuringInbound: true };
   }
 
-  // --- Phase 2: Returns (greedy cold-first) ---
+  // --- Phase 2: Returns (greedy, goal-aware) ---
+  //
+  // goalReached tracks whether we've already crossed goalThreshold.
+  // Once the goal is reached, remaining ships return cold to minimise added mass.
+  // Actual WH collapse (>= target) is always treated as a stranding risk.
+
   for (let i = 0; i < shipsInHole.length; i++) {
-    const ship          = shipsInHole[i];
-    const remaining     = shipsInHole.slice(i + 1);
-    const remainMaxHot  = remaining.reduce((s, sh) => s + sh.hotMass, 0);
-    const afterCold     = runningTotal + ship.coldMass;
-    const afterHot      = runningTotal + ship.hotMass;
+    const ship         = shipsInHole[i];
+    const remaining    = shipsInHole.slice(i + 1);
+    const remainMaxHot = remaining.reduce((s, sh) => s + sh.hotMass, 0);
+    const afterCold    = runningTotal + ship.coldMass;
+    const afterHot     = runningTotal + ship.hotMass;
 
     if (afterCold >= target) {
-      // Cold return collapses — all remaining ships are stranded
+      // Cold return would actually collapse the WH — always a stranding risk.
       runningTotal = afterCold;
+      const isGoalStep = !goalReached;
+      goalReached = true;
       steps.push({
-        id:             `home-${ship.id}-${uid()}`,
+        id:              `home-${ship.id}-${uid()}`,
         ship,
-        direction:      'home',
-        isHot:          false,
-        massThisJump:   ship.coldMass,
+        direction:       'home',
+        isHot:           false,
+        massThisJump:    ship.coldMass,
         runningTotal,
-        collapses:      true,
+        collapses:       true,
+        isGoalStep,
         isStrandingRisk: remaining.length > 0,
       });
       if (remaining.length > 0) {
@@ -156,8 +203,8 @@ export function generatePlan(wormhole, fleet) {
       }
       break;
 
-    } else if (afterCold + remainMaxHot >= target) {
-      // Cold is safe; remaining ships (all hot) can still collapse
+    } else if (goalReached) {
+      // Goal already achieved — return cold to minimise additional mass.
       runningTotal = afterCold;
       steps.push({
         id:           `home-${ship.id}-${uid()}`,
@@ -167,12 +214,44 @@ export function generatePlan(wormhole, fleet) {
         massThisJump: ship.coldMass,
         runningTotal,
         collapses:    false,
+        isGoalStep:   false,
+      });
+
+    } else if (afterCold >= goalThreshold) {
+      // Cold return reaches the goal without collapsing.
+      runningTotal = afterCold;
+      goalReached  = true;
+      steps.push({
+        id:           `home-${ship.id}-${uid()}`,
+        ship,
+        direction:    'home',
+        isHot:        false,
+        massThisJump: ship.coldMass,
+        runningTotal,
+        collapses:    false,
+        isGoalStep:   true,
+      });
+
+    } else if (afterCold + remainMaxHot >= goalThreshold) {
+      // Cold is safe; remaining ships (all hot) can still reach the goal.
+      runningTotal = afterCold;
+      steps.push({
+        id:           `home-${ship.id}-${uid()}`,
+        ship,
+        direction:    'home',
+        isHot:        false,
+        massThisJump: ship.coldMass,
+        runningTotal,
+        collapses:    false,
+        isGoalStep:   false,
       });
 
     } else {
-      // Must go hot — cold + remaining max-hot isn't enough to ever collapse
-      runningTotal   = afterHot;
-      const collapses = afterHot >= target;
+      // Must go hot — cold + remaining max-hot isn't enough to reach the goal.
+      runningTotal        = afterHot;
+      const isGoalStep    = !goalReached && afterHot >= goalThreshold;
+      if (isGoalStep) goalReached = true;
+      const collapses     = afterHot >= target;
       steps.push({
         id:             `home-${ship.id}-${uid()}`,
         ship,
@@ -181,6 +260,7 @@ export function generatePlan(wormhole, fleet) {
         massThisJump:   ship.hotMass,
         runningTotal,
         collapses,
+        isGoalStep,
         isStrandingRisk: collapses && remaining.length > 0,
       });
       if (collapses && remaining.length > 0) {
@@ -194,38 +274,42 @@ export function generatePlan(wormhole, fleet) {
     }
   }
 
-  const canCollapse = steps.some(s => s.collapses);
-  if (!canCollapse) {
+  const canReachGoal = steps.some(s => s.isGoalStep);
+  if (!canReachGoal) {
     warnings.push({
       id: uid(),
       type: 'insufficient',
-      message: 'Fleet does not have enough total mass to collapse this wormhole. Add more or heavier ships.',
+      message: `Fleet does not have enough total mass to ${goalConfig.label.toLowerCase()} this wormhole. Add more or heavier ships.`,
     });
   }
 
-  return { steps, warnings, canCollapse };
+  return { steps, warnings, canReachGoal, goal };
 }
 
 /**
- * Recompute runningTotal and collapses after manual step reorder.
+ * Recompute runningTotal, collapses, and isGoalStep after manual step reorder.
  * isStrandingRisk is simplified: flag if a collapse step has later 'in' steps still pending.
+ *
+ * @param {Array}  steps
+ * @param {object} wormhole
+ * @param {string} goal     — 'close' | 'crit' | 'doorstop'
  */
-export function recalculatePlan(steps, wormhole) {
-  const target = wormhole.totalMass;
-  let running  = 0;
+export function recalculatePlan(steps, wormhole, goal = 'close') {
+  const target        = wormhole.totalMass;
+  const goalConfig    = GOALS[goal] ?? GOALS.close;
+  const goalThreshold = Math.round(target * goalConfig.threshold);
+  let running         = 0;
+  let goalReached     = false;
 
   return steps.map((step, idx) => {
     running += step.massThisJump;
-    const collapses = running >= target;
+    const collapses    = running >= target;
+    const isGoalStep   = !goalReached && running >= goalThreshold;
+    if (isGoalStep) goalReached = true;
 
-    // Stranding: if this step collapses and there are still 'in' steps after it
-    const shipsStillInHole = steps.slice(idx + 1).filter(s => {
-      // A ship is "in hole" if it went in but hasn't come back before this point
-      // Simplified: check if any later step has direction 'home' for same ship
-      return s.direction === 'in';
-    });
-    const isStrandingRisk = collapses && shipsStillInHole.length > 0;
+    const shipsStillInHole = steps.slice(idx + 1).filter(s => s.direction === 'in');
+    const isStrandingRisk  = collapses && shipsStillInHole.length > 0;
 
-    return { ...step, runningTotal: running, collapses, isStrandingRisk };
+    return { ...step, runningTotal: running, collapses, isGoalStep, isStrandingRisk };
   });
 }

@@ -6,10 +6,11 @@ import RollingPlan from './components/RollingPlan.jsx';
 import ExecutionMode from './components/ExecutionMode.jsx';
 
 export default function App() {
-  const [screen, setScreen]       = useState('wormhole-select');
-  const [wormhole, setWormhole]   = useState(null);
-  const [fleet, setFleet]         = useState([]);
-  const [plan, setPlan]           = useState(null);
+  const [screen, setScreen]           = useState('wormhole-select');
+  const [wormhole, setWormhole]       = useState(null);
+  const [fleet, setFleet]             = useState([]);
+  const [goal, setGoal]               = useState('close');
+  const [plan, setPlan]               = useState(null);
   const [activeSteps, setActiveSteps] = useState([]);
 
   function handleWormholeSelect(wh) {
@@ -20,7 +21,7 @@ export default function App() {
   }
 
   function handleGeneratePlan() {
-    setPlan(generatePlan(wormhole, fleet));
+    setPlan(generatePlan(wormhole, fleet, goal));
     setScreen('rolling-plan');
   }
 
@@ -34,6 +35,7 @@ export default function App() {
     setFleet([]);
     setPlan(null);
     setActiveSteps([]);
+    setGoal('close');
     setScreen('wormhole-select');
   }
 
@@ -47,6 +49,8 @@ export default function App() {
         wormhole={wormhole}
         fleet={fleet}
         setFleet={setFleet}
+        goal={goal}
+        onGoalChange={setGoal}
         onGenerate={handleGeneratePlan}
         onBack={() => setScreen('wormhole-select')}
       />
@@ -71,6 +75,7 @@ export default function App() {
         wormhole={wormhole}
         fleet={fleet}
         steps={activeSteps}
+        goal={plan?.goal ?? 'close'}
         onReset={handleReset}
       />
     );

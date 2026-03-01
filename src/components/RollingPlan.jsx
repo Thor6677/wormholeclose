@@ -1,11 +1,26 @@
 import { useState } from 'react';
-import { formatMass, recalculatePlan } from '../rollingEngine.js';
+import { formatMass, recalculatePlan, GOALS } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
 
-function StepRow({ step, index, isDragging, onDragStart, onDragOver, onDrop, onDragEnd }) {
+// Per-goal badge styling (full Tailwind strings required — no dynamic interpolation)
+const GOAL_BADGE = {
+  close:    'bg-emerald-900/50 text-emerald-300',
+  crit:     'bg-orange-900/50 text-orange-300',
+  doorstop: 'bg-violet-900/50 text-violet-300',
+};
+
+function StepRow({ step, index, isDragging, onDragStart, onDragOver, onDrop, onDragEnd, goal }) {
   const isIn       = step.direction === 'in';
-  const isCollapse = step.collapses;
+  const isGoalStep = step.isGoalStep;
   const isStrand   = step.isStrandingRisk;
+  const goalCfg    = GOALS[goal] ?? GOALS.close;
+  const badgeCls   = GOAL_BADGE[goal] ?? GOAL_BADGE.close;
+
+  // Row background: stranding > goal-reached > default
+  const rowBg =
+    isStrand   ? 'bg-red-950/30' :
+    isGoalStep ? (goal === 'close' ? 'bg-emerald-950/20' : goal === 'crit' ? 'bg-orange-950/20' : 'bg-violet-950/20') :
+    '';
 
   return (
     <div
@@ -17,8 +32,7 @@ function StepRow({ step, index, isDragging, onDragStart, onDragOver, onDrop, onD
       className={[
         'flex items-center gap-3 px-4 py-3 cursor-grab active:cursor-grabbing select-none transition-opacity',
         isDragging ? 'opacity-40' : 'opacity-100',
-        isStrand   ? 'bg-red-950/30'     : '',
-        isCollapse && !isStrand ? 'bg-emerald-950/20' : '',
+        rowBg,
       ].join(' ')}
     >
       {/* Step number */}
@@ -36,9 +50,9 @@ function StepRow({ step, index, isDragging, onDragStart, onDragOver, onDrop, onD
           <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${step.isHot ? 'bg-orange-900/50 text-orange-300' : 'bg-slate-700 text-slate-400'}`}>
             {step.isHot ? 'HOT' : 'COLD'}
           </span>
-          {isCollapse && (
-            <span className="text-xs px-1.5 py-0.5 rounded bg-emerald-900/50 text-emerald-300 font-bold">
-              COLLAPSES
+          {isGoalStep && (
+            <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${badgeCls}`}>
+              {goalCfg.badge}
             </span>
           )}
           {isStrand && (
@@ -67,14 +81,18 @@ function StepRow({ step, index, isDragging, onDragStart, onDragOver, onDrop, onD
 }
 
 export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) {
+  const goal    = plan.goal ?? 'close';
+  const goalCfg = GOALS[goal] ?? GOALS.close;
+
   const [steps,    setSteps]    = useState(() =>
     plan.steps.map(s => ({ ...s, _target: wormhole.totalMass }))
   );
   const [dragIdx,  setDragIdx]  = useState(null);
   const [overIdx,  setOverIdx]  = useState(null);
 
-  const lastTotal  = steps[steps.length - 1]?.runningTotal ?? 0;
-  const hasStrand  = steps.some(s => s.isStrandingRisk);
+  const lastTotal      = steps[steps.length - 1]?.runningTotal ?? 0;
+  const hasStrand      = steps.some(s => s.isStrandingRisk);
+  const canReachGoal   = steps.some(s => s.isGoalStep);
 
   function handleDragStart(i) { setDragIdx(i); }
   function handleDragOver(e, i) { e.preventDefault(); setOverIdx(i); }
@@ -83,7 +101,7 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
     const next = [...steps];
     const [item] = next.splice(dragIdx, 1);
     next.splice(targetIdx, 0, item);
-    setSteps(recalculatePlan(next, wormhole).map(s => ({ ...s, _target: wormhole.totalMass })));
+    setSteps(recalculatePlan(next, wormhole, goal).map(s => ({ ...s, _target: wormhole.totalMass })));
     setDragIdx(null);
     setOverIdx(null);
   }
@@ -97,7 +115,7 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
         <div className="flex-1 min-w-0">
           <h2 className="text-lg font-bold text-cyan-400">Rolling Plan — {wormhole.type}</h2>
           <p className="text-slate-500 text-xs">
-            {fleet.length} ship{fleet.length !== 1 ? 's' : ''} · {steps.length} jump{steps.length !== 1 ? 's' : ''}
+            {fleet.length} ship{fleet.length !== 1 ? 's' : ''} · {steps.length} jump{steps.length !== 1 ? 's' : ''} · {goalCfg.label}
           </p>
         </div>
       </div>
@@ -129,9 +147,9 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
             <span>{formatMass(lastTotal)} consumed</span>
             <span>Max {formatMass(wormhole.totalMass)}</span>
           </div>
-          {!plan.canCollapse && (
+          {!canReachGoal && (
             <div className="mt-2 text-red-400 text-xs">
-              ⚠ Insufficient fleet mass — add more ships to collapse this wormhole.
+              ⚠ Insufficient fleet mass — add more ships to {goalCfg.label.toLowerCase()} this wormhole.
             </div>
           )}
         </div>
@@ -158,6 +176,7 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
                 <StepRow
                   step={step}
                   index={i}
+                  goal={goal}
                   isDragging={dragIdx === i}
                   onDragStart={() => handleDragStart(i)}
                   onDragOver={e => handleDragOver(e, i)}
@@ -177,10 +196,10 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
 
         <button
           onClick={() => onStart(steps)}
-          disabled={steps.length === 0 || !plan.canCollapse}
+          disabled={steps.length === 0 || !canReachGoal}
           className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed transition-colors text-lg"
         >
-          Start Roll →
+          Start {goalCfg.shortLabel} Run →
         </button>
       </div>
     </div>
