@@ -151,6 +151,11 @@ function statusLabel(frac) {
 function statusClass(frac) {
   return frac >= 0.5 ? 'status-stable' : frac >= 0.1 ? 'status-unstable' : 'status-critical';
 }
+function stageLabel(frac) {
+  if (frac >= 0.5) return 'Stage 1';
+  if (frac >= 0.1) return 'Stage 2';
+  return 'Stage 3';
+}
 
 function onCalculate() {
   const val    = document.getElementById('wormhole-input').value.trim().toUpperCase();
@@ -226,6 +231,8 @@ function onCalculate() {
     ? Math.max(0, remaining - doorstopCold) : remaining;
 
   const trips = buildRoundTrips(validFleet, fullPasses, partialResult);
+  const hasHIC = !!validFleet.HIC;
+  let insertedPhase2Header = status !== 'stable';
 
   // ── Build header HTML ──
   let headerHtml = `
@@ -249,6 +256,17 @@ function onCalculate() {
   let stepNum       = 0;
   let massRemaining = startMass;
 
+  if (status === 'stable' && trips.length > 0) {
+    steps.push({
+      title: 'Phase 1 — Halve the Hole',
+      html: `<div class="phase-separator phase-1">
+        <h3>Phase 1 — Halve the Hole</h3>
+        <p>Get the hole from <span class="status-stable">Stage 1 (Stable)</span> to <span class="status-unstable">Stage 2 (Unstable)</span> by passing roughly 50% of its worst-case mass.</p>
+        <p>Jump ships <strong>COLD in, HOT out</strong>. Watch after every IN jump — if the hole goes Unstable earlier than expected, there was pre-existing mass and you have less remaining than worst case.</p>
+      </div>`,
+    });
+  }
+
   for (let i = 0; i < trips.length; i++) {
     const trip      = trips[i];
     const mIn       = JumpMass[trip.type][trip.inMode];
@@ -256,10 +274,25 @@ function onCalculate() {
     const isLast    = i === trips.length - 1;
     const typeClass = trip.passType === 'calibrated' ? 'step-calibrated' : 'step-full';
 
-    const massAfterIn  = massRemaining - mIn;
-    const fracAfterIn  = massAfterIn  / totalMass;
-    const massAfterOut = massAfterIn  - mOut;
-    const fracAfterOut = massAfterOut / totalMass;
+    const fracBefore     = massRemaining / totalMass;
+    const massAfterIn    = massRemaining - mIn;
+    const fracAfterIn    = massAfterIn  / totalMass;
+    const massAfterOut   = massAfterIn  - mOut;
+    const fracAfterOut   = massAfterOut / totalMass;
+    const crossingStage2 = fracBefore >= 0.5 && fracAfterIn < 0.5;
+    const isInsideCrit   = fracAfterIn < 0.1 && massAfterIn > 0;
+
+    if (!insertedPhase2Header && crossingStage2) {
+      insertedPhase2Header = true;
+      steps.push({
+        title: 'Phase 2 — Crit the Hole',
+        html: `<div class="phase-separator phase-2">
+          <h3>Phase 2 — Crit the Hole</h3>
+          <p>The hole is now <span class="status-unstable">Stage 2 (Unstable)</span>. Roll carefully toward <span class="status-critical">Stage 3 (Critical)</span>.</p>
+          <p>Assume worst case — the hole may be max under-sized. If a HIC is in your fleet, use it for any return from a Critical hole. Never jump a Battleship out of a Critical hole if a HIC is available.</p>
+        </div>`,
+      });
+    }
 
     // ── IN jump step ──
     stepNum++;
@@ -297,6 +330,12 @@ function onCalculate() {
         inHtml += `<li class="check-warn">⚠️ Shows <span class="status-critical">Critical</span> → return <strong>COLD</strong>, hold all ships, skip to closure</li>`;
       }
       inHtml += `</ul></div>`;
+    }
+    if (crossingStage2) {
+      inHtml += `<div class="stage-transition-alert">
+        <strong>📍 Stage 2 Watch:</strong> This jump should take the hole from <span class="status-stable">Stage 1 (Stable)</span> to <span class="status-unstable">Stage 2 (Unstable)</span>.
+        If it went Unstable on an earlier jump, there was pre-existing mass — you have less remaining than worst case assumed.
+      </div>`;
     }
     inHtml += `</div>`;
 
@@ -340,6 +379,19 @@ function onCalculate() {
         outHtml += `<li class="check-ok">✅ <span class="${statusClass(fracAfterOut)}">${statusLabel(fracAfterOut)}</span>${isLast ? ' — all ships back, proceed to closure' : ' — continue to next step'}</li>`;
       }
       outHtml += `</ul></div>`;
+    }
+    if (isInsideCrit && !inCollapses) {
+      const hicHint   = (trip.type === 'Battleship' && hasHIC)
+        ? `<li>A HIC is in your fleet — use it for this return. Never jump a Battleship out of a Critical hole if a HIC is available.</li>` : '';
+      const higgsHint = trip.type === 'Battleship'
+        ? `<li>If a Battleship return is unavoidable: remove the Higgs rig (use a mobile depot), jump <strong>COLD</strong>, then re-fit the Higgs afterward.</li>` : '';
+      outHtml += `<div class="crit-safety-alert">
+        <strong>🚨 Returning from a Critical hole</strong>
+        <ul>
+          <li>Return <strong>COLD</strong> — do not jump HOT out of a Critical hole.</li>
+          ${hicHint}${higgsHint}
+        </ul>
+      </div>`;
     }
     outHtml += `</div>`;
 
@@ -437,6 +489,21 @@ function onCalculate() {
       </div>`,
     });
   }
+
+  // ── Rolled Out reference step ──
+  steps.push({
+    title: 'If You Get Rolled Out',
+    html: `<div class="rolled-out-ref">
+      <h3>If You Get Rolled Out</h3>
+      <p>Getting rolled out happens to the best of us. Your options:</p>
+      <ol>
+        <li><strong>Scan yourself out</strong> — carry a probe launcher and cloak, or a mobile depot to refit. Remove the Higgs rig first to make the ship more manageable.</li>
+        <li><strong>Self-Destruct</strong></li>
+        <li><strong>Ask in local</strong> — good luck.</li>
+      </ol>
+      <p class="whsoc-tip">Prevention: on any calibrated step, if the last jump out is uncomfortably close to the limit, convert a HOT return to COLD. There is a slight chance you will need a HIC to finish the hole, but you will not get rolled out.</p>
+    </div>`,
+  });
 
   // ── Render step navigator ──
   _planSteps = steps;
