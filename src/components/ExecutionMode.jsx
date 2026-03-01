@@ -406,6 +406,16 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
             🚪 This jump doorstops the wormhole
           </div>
         )}
+        {/* Switched-to-cold safety notice */}
+        {step.switched && step.warning && (
+          <div className={`rounded-xl p-3 text-sm border ${
+            step.switchReason === 'strand-risk'
+              ? 'bg-blue-950/30 border-blue-500/40 text-blue-300'
+              : 'bg-amber-950/30 border-amber-500/40 text-amber-300'
+          }`}>
+            {step.switchReason === 'strand-risk' ? '🔵' : '⚠'} {step.warning}
+          </div>
+        )}
 
         {/* Main step card */}
         <div className={`rounded-2xl border-2 ${borderColor} ${cardBg} p-5 flex flex-col gap-5`}>
@@ -422,6 +432,11 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
 
           {/* Direction */}
           <div className="text-center">
+            {/* Mode icon for switched steps */}
+            {step.switchReason === 'strand-risk'   && <div className="text-3xl mb-1">🔵</div>}
+            {step.switchReason === 'collapse-risk' && <div className="text-3xl mb-1">⚠</div>}
+            {step.switchReason === 'abort'         && <div className="text-3xl mb-1">🚨</div>}
+            {!step.switchReason && step.isHot && !step.isHic && <div className="text-2xl mb-1">✅</div>}
             <div className={`text-8xl font-bold leading-none ${isIn ? 'text-cyan-400' : 'text-amber-400'}`}>
               {isIn ? '→' : '←'}
             </div>
@@ -433,6 +448,16 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
                 : isIn ? 'Jump INTO hole' : 'Jump HOME'
               }
             </div>
+            {/* Reason sub-label */}
+            {step.reason && (
+              <div className={`text-xs mt-1.5 italic ${
+                step.switchReason === 'strand-risk'   ? 'text-blue-400/80' :
+                step.switchReason === 'collapse-risk' ? 'text-amber-400/80' :
+                'text-slate-500'
+              }`}>
+                {step.reason}
+              </div>
+            )}
           </div>
 
           {/* Mode + Mass */}
@@ -447,12 +472,18 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
                     {step.isHot ? 'HOT' : 'COLD'}
                   </div>
               }
+              {step.switched && (
+                <div className="text-xs text-slate-500 mt-1">auto-switched</div>
+              )}
             </div>
             <div className="bg-slate-800 rounded-xl p-4 text-center">
               <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">Mass</div>
               <div className="text-2xl font-bold text-slate-100 font-mono">
-                {formatMass(step.massThisJump)}
+                {step.showVariance ? '~' : ''}{formatMass(step.massThisJump)}
               </div>
+              {step.showVariance && (
+                <div className="text-xs text-slate-500 mt-0.5">±10% variance</div>
+              )}
             </div>
           </div>
 
