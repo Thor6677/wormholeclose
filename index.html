@@ -1,99 +1,12 @@
 <!DOCTYPE html>
 <html lang="en">
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <title>Wormhole Roller – Dynamic Collapse Planner</title>
-  <link rel="stylesheet" href="style.css"/>
-</head>
-<body>
-  <div class="container">
-    <h1>Wormhole Roller Tool</h1>
-
-    <section class="wormhole-settings">
-      <label>Wormhole Code:
-        <input type="text" id="wormhole-input" list="wormhole-list"
-               placeholder="Type a wormhole code…" autocomplete="off"/>
-        <datalist id="wormhole-list"></datalist>
-      </label>
-
-      <div id="wormhole-details" class="hidden">
-        <p id="wormhole-info" class="wh-info"></p>
-
-        <label>Current Mass State:
-          <select id="wormhole-status">
-            <option value="stable">Stable (50–100%)</option>
-            <option value="unstable">Unstable (10–50%)</option>
-            <option value="critical">Critical (&lt;10%)</option>
-          </select>
-        </label>
-
-        <label>Goal:
-          <select id="wormhole-goal">
-            <option value="crit">Crit – get to &lt;10% mass</option>
-            <option value="close">Close – fully collapse</option>
-            <option value="doorstop">Doorstop – crit and leave a ship to close later</option>
-          </select>
-        </label>
-
-        <div id="doorstop-section" class="hidden">
-          <label>Doorstop Ship Type:
-            <select id="doorstop-ship">
-              <option value="Battleship">Battleship</option>
-              <option value="Cruiser">Cruiser</option>
-              <option value="HIC">HIC</option>
-              <option value="Custom">Custom</option>
-            </select>
-          </label>
-        </div>
-
-        <h2>Your Fleet</h2>
-        <div class="fleet-grid">
-          <div class="fleet-row">
-            <span class="ship-label">
-              Battleships
-              <span class="ship-stats">cold 200,000 t / hot 300,000 t</span>
-            </span>
-            <input type="number" id="fleet-battleship" min="0" value="0" class="fleet-input"/>
-          </div>
-          <div class="fleet-row">
-            <span class="ship-label">
-              Cruisers
-              <span class="ship-stats">cold 36,000 t / hot 126,000 t</span>
-            </span>
-            <input type="number" id="fleet-cruiser" min="0" value="0" class="fleet-input"/>
-          </div>
-          <div class="fleet-row">
-            <span class="ship-label">
-              HICs
-              <span class="ship-stats">cold 830 t / hot 132,400 t</span>
-            </span>
-            <input type="number" id="fleet-hic" min="0" value="0" class="fleet-input"/>
-          </div>
-          <div class="fleet-row custom-row">
-            <span class="ship-label">
-              Custom Ship
-              <span class="ship-stats">set your own cold / hot mass</span>
-            </span>
-            <input type="number" id="fleet-custom" min="0" value="0" class="fleet-input"/>
-          </div>
-          <div id="custom-mass-row" class="custom-mass-row hidden">
-            <label>Cold mass (t):
-              <input type="number" id="custom-cold" min="0" value="0"/>
-            </label>
-            <label>Hot mass (t):
-              <input type="number" id="custom-hot" min="0" value="0"/>
-            </label>
-          </div>
-        </div>
-
-        <button id="calc-btn">Calculate Plan</button>
-      </div>
-    </section>
-
-    <div id="plan-output"></div>
-  </div>
-
-  <script type="module" src="app.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>WH Roller</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
 </html>
