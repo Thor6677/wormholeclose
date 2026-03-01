@@ -120,10 +120,22 @@ export default function FleetSetup({ wormhole, fleet, setFleet, goal, onGoalChan
               ))}
             </select>
 
+            {/* HIC info callout */}
+            {form.shipClass === 'HIC (Mass Entanglers)' && (
+              <div className="bg-cyan-950/40 border border-cyan-500/40 rounded-xl p-3 text-xs text-cyan-300 space-y-1">
+                <div className="font-semibold text-cyan-200">HIC with Mass Entanglers</div>
+                <div>• Entry into hole: <strong>~10 kg</strong> — entanglers active, near-zero mass</div>
+                <div>• Return home: <strong>300M</strong> — MWD hot, same as a battleship</div>
+                <div className="text-cyan-400/70 pt-1">Place HIC last in fleet — it enters near-zero and collapses the hole on return.</div>
+              </div>
+            )}
+
             {/* Mass inputs — shown in M-kg */}
             <div className="grid grid-cols-2 gap-2">
               <div>
-                <label className="text-xs text-slate-500 mb-1 block">Hot mass (M kg)</label>
+                <label className="text-xs text-slate-500 mb-1 block">
+                  {form.shipClass === 'HIC (Mass Entanglers)' ? 'Return mass / MWD hot (M kg)' : 'Hot mass (M kg)'}
+                </label>
                 <input
                   type="number"
                   min="0"
@@ -133,13 +145,22 @@ export default function FleetSetup({ wormhole, fleet, setFleet, goal, onGoalChan
                 />
               </div>
               <div>
-                <label className="text-xs text-slate-500 mb-1 block">Cold mass (M kg)</label>
+                <label className="text-xs text-slate-500 mb-1 block">
+                  {form.shipClass === 'HIC (Mass Entanglers)' ? 'Entry mass / entanglers (M kg)' : 'Cold mass (M kg)'}
+                </label>
                 <input
                   type="number"
                   min="0"
-                  value={Math.round(form.coldMass / 1000)}
+                  value={form.shipClass === 'HIC (Mass Entanglers)' ? 0 : Math.round(form.coldMass / 1000)}
+                  readOnly={form.shipClass === 'HIC (Mass Entanglers)'}
                   onChange={e => handleMassInput('coldMass', e.target.value)}
-                  className={`w-full bg-slate-900 border rounded-xl px-3 py-2.5 text-slate-100 focus:outline-none ${coldOver ? 'border-red-500' : 'border-slate-700 focus:border-cyan-500'}`}
+                  className={`w-full bg-slate-900 border rounded-xl px-3 py-2.5 focus:outline-none ${
+                    form.shipClass === 'HIC (Mass Entanglers)'
+                      ? 'text-slate-600 border-slate-800 cursor-not-allowed'
+                      : coldOver
+                        ? 'border-red-500 text-slate-100'
+                        : 'border-slate-700 focus:border-cyan-500 text-slate-100'
+                  }`}
                 />
               </div>
             </div>
