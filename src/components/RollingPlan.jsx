@@ -8,12 +8,23 @@ const GOAL_BADGE = {
   doorstop: 'bg-violet-900/50 text-violet-300',
 };
 
+// Mode icon for a step: reflects the selectJumpMode outcome
+function modeIcon(step) {
+  if (step.switchReason === 'strand-risk')    return { glyph: '🔵', label: 'Switched cold — strand risk' };
+  if (step.switchReason === 'collapse-risk')  return { glyph: '⚠', label: 'Switched cold — collapse risk' };
+  if (step.switchReason === 'abort')          return { glyph: '🚨', label: 'Abort — cannot proceed safely' };
+  if (step.isHic)                             return null; // HIC has its own badge
+  if (step.isHot)                             return { glyph: '✅', label: 'Hot — safe' };
+  return null; // forced cold, no extra icon
+}
+
 function StepRow({ step, index, goal }) {
   const isIn       = step.direction === 'in';
   const isGoalStep = step.isGoalStep;
   const isStrand   = step.isStrandingRisk;
   const goalCfg    = GOALS[goal] ?? GOALS.close;
   const badgeCls   = GOAL_BADGE[goal] ?? GOAL_BADGE.close;
+  const icon       = modeIcon(step);
 
   const rowBg =
     isStrand   ? 'bg-red-950/30' :
@@ -25,10 +36,13 @@ function StepRow({ step, index, goal }) {
       {/* Step number */}
       <span className="text-slate-600 text-xs font-mono w-5 text-center shrink-0">{index + 1}</span>
 
-      {/* Direction arrow */}
-      <span className={`text-xl shrink-0 ${isIn ? 'text-cyan-400' : 'text-amber-400'}`}>
-        {isIn ? '→' : '←'}
-      </span>
+      {/* Mode icon + direction arrow */}
+      <div className="flex flex-col items-center shrink-0 w-6">
+        {icon && <span className="text-xs leading-none mb-0.5">{icon.glyph}</span>}
+        <span className={`text-xl leading-none ${isIn ? 'text-cyan-400' : 'text-amber-400'}`}>
+          {isIn ? '→' : '←'}
+        </span>
+      </div>
 
       {/* Pilot + ship */}
       <div className="flex-1 min-w-0">
@@ -64,11 +78,24 @@ function StepRow({ step, index, goal }) {
             }
           </span>
         </div>
+        {/* Reason sub-label — shown for all switched steps */}
+        {step.switched && step.reason && (
+          <div className={`text-xs mt-0.5 italic ${
+            step.switchReason === 'strand-risk'   ? 'text-blue-400/70' :
+            step.switchReason === 'collapse-risk' ? 'text-amber-400/70' :
+            'text-slate-500'
+          }`}>
+            {step.reason}
+          </div>
+        )}
       </div>
 
       {/* Mass */}
       <div className="text-right shrink-0">
-        <div className="text-slate-200 text-sm font-mono">{formatMass(step.massThisJump)}</div>
+        <div className="text-slate-200 text-sm font-mono">
+          {step.showVariance ? '~' : ''}{formatMass(step.massThisJump)}
+          {step.showVariance && <span className="text-xs text-slate-500 ml-0.5">±10%</span>}
+        </div>
         <div className={`text-xs font-mono ${step.runningTotal >= step._target ? 'text-red-400' : 'text-slate-600'}`}>
           {formatMass(step.runningTotal)}
         </div>
