@@ -11,7 +11,7 @@ export default function App() {
   const [fleet, setFleet]             = useState([]);
   const [goal, setGoal]               = useState('close');
   const [plan, setPlan]               = useState(null);
-  const [activeSteps, setActiveSteps] = useState([]);
+  const [activeItems, setActiveItems] = useState([]);
 
   function handleWormholeSelect(wh) {
     setWormhole(wh);
@@ -25,8 +25,8 @@ export default function App() {
     setScreen('rolling-plan');
   }
 
-  function handleStartRoll(steps) {
-    setActiveSteps(steps);
+  function handleStartRoll(items) {
+    setActiveItems(items);
     setScreen('execution');
   }
 
@@ -34,7 +34,7 @@ export default function App() {
     setWormhole(null);
     setFleet([]);
     setPlan(null);
-    setActiveSteps([]);
+    setActiveItems([]);
     setGoal('close');
     setScreen('wormhole-select');
   }
@@ -74,8 +74,9 @@ export default function App() {
       <ExecutionMode
         wormhole={wormhole}
         fleet={fleet}
-        steps={activeSteps}
+        initialItems={activeItems}
         goal={plan?.goal ?? 'close'}
+        doorstopShip={plan?.doorstopShip ?? null}
         onReset={handleReset}
       />
     );
