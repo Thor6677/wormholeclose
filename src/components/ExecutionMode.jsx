@@ -1,19 +1,51 @@
 import { useState } from 'react';
-import { formatMass } from '../rollingEngine.js';
+import { formatMass, GOALS } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
 import SideTracker from './SideTracker.jsx';
 
-function CollapseScreen({ wormhole, onReset }) {
+const DONE_SCREENS = {
+  close: {
+    icon:    '💥',
+    heading: 'WORMHOLE COLLAPSED',
+    sub:     (wh) => `${wh.type} has been closed.`,
+    note:    'All pilots should be accounted for.',
+    color:   'text-emerald-400',
+  },
+  crit: {
+    icon:    '⚡',
+    heading: 'WORMHOLE CRITTED',
+    sub:     (wh) => `${wh.type} is now at critical mass.`,
+    note:    'One more jump will collapse it — tread carefully.',
+    color:   'text-orange-400',
+  },
+  doorstop: {
+    icon:    '🚪',
+    heading: 'DOORSTOP COMPLETE',
+    sub:     (wh) => `${wh.type} has been heavily rolled.`,
+    note:    'The hole is alive but weakened — use with caution.',
+    color:   'text-violet-400',
+  },
+};
+
+// Tailwind classes for the goal-step highlight card (must be full strings)
+const GOAL_CARD = {
+  close:    { border: 'border-emerald-500', bg: 'bg-emerald-950/20', done: 'bg-emerald-400 hover:bg-emerald-300 active:bg-emerald-500' },
+  crit:     { border: 'border-orange-500',  bg: 'bg-orange-950/20',  done: 'bg-orange-400 hover:bg-orange-300 active:bg-orange-500'   },
+  doorstop: { border: 'border-violet-500',  bg: 'bg-violet-950/20',  done: 'bg-violet-400 hover:bg-violet-300 active:bg-violet-500'   },
+};
+
+function DoneScreen({ wormhole, goal, onReset }) {
+  const cfg = DONE_SCREENS[goal] ?? DONE_SCREENS.close;
   return (
     <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center px-6 text-center">
-      <div className="mb-6 relative">
-        <div className="text-8xl">💥</div>
+      <div className="mb-6">
+        <div className="text-8xl">{cfg.icon}</div>
       </div>
-      <h1 className="text-4xl font-bold text-emerald-400 mb-3 tracking-tight">
-        WORMHOLE COLLAPSED
+      <h1 className={`text-4xl font-bold mb-3 tracking-tight ${cfg.color}`}>
+        {cfg.heading}
       </h1>
-      <p className="text-slate-400 text-lg mb-2">{wormhole.type} has been closed.</p>
-      <p className="text-slate-600 text-sm mb-10">All pilots should be accounted for.</p>
+      <p className="text-slate-400 text-lg mb-2">{cfg.sub(wormhole)}</p>
+      <p className="text-slate-600 text-sm mb-10">{cfg.note}</p>
       <button
         onClick={onReset}
         className="px-10 py-4 rounded-xl font-semibold bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 text-slate-900 text-lg transition-colors"
@@ -24,7 +56,7 @@ function CollapseScreen({ wormhole, onReset }) {
   );
 }
 
-export default function ExecutionMode({ wormhole, fleet, steps, onReset }) {
+export default function ExecutionMode({ wormhole, fleet, steps, goal = 'close', onReset }) {
   const [currentIdx,   setCurrentIdx]   = useState(0);
   const [showTracker,  setShowTracker]  = useState(false);
 
@@ -34,28 +66,30 @@ export default function ExecutionMode({ wormhole, fleet, steps, onReset }) {
   // Mass consumed BEFORE the current step (i.e. from already-completed steps)
   const massConsumedSoFar = currentIdx > 0 ? steps[currentIdx - 1].runningTotal : 0;
 
+  const goalCard = GOAL_CARD[goal] ?? GOAL_CARD.close;
+
   if (done) {
-    return <CollapseScreen wormhole={wormhole} onReset={onReset} />;
+    return <DoneScreen wormhole={wormhole} goal={goal} onReset={onReset} />;
   }
 
   const isIn       = step.direction === 'in';
-  const isCollapse = step.collapses;
+  const isGoalStep = step.isGoalStep;
   const isStrand   = step.isStrandingRisk;
 
   const borderColor =
-    isStrand   ? 'border-red-500'            :
-    isCollapse ? 'border-emerald-500'         :
-    isIn       ? 'border-cyan-500/60'         :
+    isStrand   ? 'border-red-500'      :
+    isGoalStep ? goalCard.border       :
+    isIn       ? 'border-cyan-500/60'  :
                  'border-amber-500/40';
 
   const cardBg =
-    isStrand   ? 'bg-red-950/20'     :
-    isCollapse ? 'bg-emerald-950/20' :
+    isStrand   ? 'bg-red-950/20' :
+    isGoalStep ? goalCard.bg     :
                  'bg-slate-900';
 
   const doneColor =
-    isCollapse ? 'bg-emerald-400 hover:bg-emerald-300 active:bg-emerald-500' :
-    isIn       ? 'bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500'         :
+    isGoalStep ? goalCard.done :
+    isIn       ? 'bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500'   :
                  'bg-amber-400 hover:bg-amber-300 active:bg-amber-500';
 
   return (
@@ -104,9 +138,19 @@ export default function ExecutionMode({ wormhole, fleet, steps, onReset }) {
             🚨 WARNING — This jump collapses the wormhole with pilots still inside!
           </div>
         )}
-        {isCollapse && !isStrand && (
+        {isGoalStep && !isStrand && goal === 'close' && (
           <div className="bg-emerald-900/40 border border-emerald-500/60 rounded-xl p-3 text-emerald-300 text-sm font-semibold text-center">
             💥 This is the collapsing jump
+          </div>
+        )}
+        {isGoalStep && !isStrand && goal === 'crit' && (
+          <div className="bg-orange-900/40 border border-orange-500/60 rounded-xl p-3 text-orange-300 text-sm font-semibold text-center">
+            ⚡ This jump criticals the wormhole
+          </div>
+        )}
+        {isGoalStep && !isStrand && goal === 'doorstop' && (
+          <div className="bg-violet-900/40 border border-violet-500/60 rounded-xl p-3 text-violet-300 text-sm font-semibold text-center">
+            🚪 This jump doorstops the wormhole
           </div>
         )}
 
