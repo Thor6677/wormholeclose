@@ -346,6 +346,91 @@ button:hover { background: #0cc; }
   cursor: not-allowed;
 }
 
+/* ── WHSOC phase separators ── */
+.phase-separator {
+  padding: 14px 16px;
+  border-radius: 6px;
+}
+.phase-separator h3 {
+  margin: 0 0 8px;
+  font-size: 1em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.phase-separator p {
+  margin: 4px 0;
+  font-size: 13px;
+  color: #ccc;
+}
+.phase-1 {
+  background: #0a1a2e;
+  border-left: 4px solid #08f;
+}
+.phase-1 h3 { color: #4af; }
+.phase-2 {
+  background: #1e0e2e;
+  border-left: 4px solid #a4f;
+}
+.phase-2 h3 { color: #c8f; }
+
+/* ── Stage transition alert ── */
+.stage-transition-alert {
+  margin: 0 12px 10px;
+  padding: 8px 12px;
+  background: #2a1e00;
+  border-left: 3px solid #fc0;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #ffd;
+}
+
+/* ── Critical safety alert ── */
+.crit-safety-alert {
+  margin: 0 12px 10px;
+  padding: 8px 12px;
+  background: #2a0800;
+  border-left: 3px solid #f40;
+  border-radius: 4px;
+  font-size: 13px;
+  color: #fcc;
+}
+.crit-safety-alert ul {
+  margin: 6px 0 0 1.2rem;
+  padding: 0;
+}
+.crit-safety-alert li { margin: 3px 0; }
+
+/* ── Rolled out reference ── */
+.rolled-out-ref {
+  padding: 14px 16px;
+  background: #1e1e1e;
+  border-left: 4px solid #888;
+  border-radius: 6px;
+}
+.rolled-out-ref h3 {
+  margin: 0 0 8px;
+  color: #aaa;
+  font-size: 1em;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.rolled-out-ref ol {
+  margin: 8px 0 0 1.2rem;
+  padding: 0;
+  color: #ccc;
+  font-size: 13px;
+}
+.rolled-out-ref li { margin: 5px 0; }
+.rolled-out-ref p  { font-size: 13px; color: #bbb; margin: 8px 0 0; }
+
+/* ── WHSOC tip text ── */
+.whsoc-tip {
+  color: #888;
+  font-size: 12px;
+  font-style: italic;
+  margin-top: 8px !important;
+}
+
 /* ── Misc ── */
 .warn-text { color: #fa0; font-size: 13px; }
 .success-text { color: #0f0; }
