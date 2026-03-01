@@ -381,17 +381,27 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
             🚨 WARNING — This jump collapses the wormhole with pilots still inside!
           </div>
         )}
-        {isGoalStep && !isStrand && goal === 'close' && (
+        {step.isHic && !isIn && step.collapses && (
+          <div className="bg-red-900/50 border border-red-500 rounded-xl p-3 text-red-100 text-sm font-semibold text-center">
+            🚨 HIC ← home (MWD hot — {formatMass(step.massThisJump)}) ⚠ THIS JUMP COLLAPSES THE HOLE
+          </div>
+        )}
+        {step.isHic && isIn && (
+          <div className="bg-cyan-900/30 border border-cyan-500/40 rounded-xl p-3 text-cyan-300 text-sm text-center">
+            Mass Entanglers active — near zero mass into hole
+          </div>
+        )}
+        {isGoalStep && !isStrand && !step.isHic && goal === 'close' && (
           <div className="bg-emerald-900/40 border border-emerald-500/60 rounded-xl p-3 text-emerald-300 text-sm font-semibold text-center">
             💥 This is the collapsing jump
           </div>
         )}
-        {isGoalStep && !isStrand && goal === 'crit' && (
+        {isGoalStep && !isStrand && !step.isHic && goal === 'crit' && (
           <div className="bg-orange-900/40 border border-orange-500/60 rounded-xl p-3 text-orange-300 text-sm font-semibold text-center">
             ⚡ This jump criticals the wormhole
           </div>
         )}
-        {isGoalStep && !isStrand && goal === 'doorstop' && (
+        {isGoalStep && !isStrand && !step.isHic && goal === 'doorstop' && (
           <div className="bg-violet-900/40 border border-violet-500/60 rounded-xl p-3 text-violet-300 text-sm font-semibold text-center">
             🚪 This jump doorstops the wormhole
           </div>
@@ -416,7 +426,12 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
               {isIn ? '→' : '←'}
             </div>
             <div className="text-slate-400 text-base mt-2">
-              {isIn ? 'Jump INTO hole' : 'Jump HOME'}
+              {step.isHic
+                ? isIn
+                  ? 'Jump INTO hole (Mass Entanglers active)'
+                  : 'Jump HOME (MWD hot)'
+                : isIn ? 'Jump INTO hole' : 'Jump HOME'
+              }
             </div>
           </div>
 
@@ -424,9 +439,14 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
           <div className="grid grid-cols-2 gap-3">
             <div className="bg-slate-800 rounded-xl p-4 text-center">
               <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">Mode</div>
-              <div className={`text-2xl font-bold ${step.isHot ? 'text-orange-400' : 'text-slate-300'}`}>
-                {step.isHot ? 'HOT' : 'COLD'}
-              </div>
+              {step.isHic
+                ? <div className={`text-xl font-bold ${isIn ? 'text-cyan-300' : 'text-orange-400'}`}>
+                    {isIn ? 'ENTANGLERS' : 'MWD HOT'}
+                  </div>
+                : <div className={`text-2xl font-bold ${step.isHot ? 'text-orange-400' : 'text-slate-300'}`}>
+                    {step.isHot ? 'HOT' : 'COLD'}
+                  </div>
+              }
             </div>
             <div className="bg-slate-800 rounded-xl p-4 text-center">
               <div className="text-slate-500 text-xs uppercase tracking-wider mb-1">Mass</div>

@@ -60,12 +60,19 @@ export const GOALS = {
 };
 
 export const SHIP_CLASSES = {
-  Battleship:    { hotMass: 300_000, coldMass: 200_000 },
-  Orca:          { hotMass: 700_000, coldMass: 500_000 },
-  Carrier:       { hotMass: 1_000_000, coldMass: 800_000 },
-  Battlecruiser: { hotMass: 150_000, coldMass: 100_000 },
-  Cruiser:       { hotMass: 75_000,  coldMass: 50_000 },
-  Custom:        { hotMass: 0,       coldMass: 0 },
+  Battleship:              { hotMass: 300_000,   coldMass: 200_000 },
+  Orca:                    { hotMass: 700_000,   coldMass: 500_000 },
+  Carrier:                 { hotMass: 1_000_000, coldMass: 800_000 },
+  Battlecruiser:           { hotMass: 150_000,   coldMass: 100_000 },
+  Cruiser:                 { hotMass: 75_000,    coldMass: 50_000  },
+  'HIC (Mass Entanglers)': {
+    // Entry: Mass Entanglers active → near-zero (~10,000 kg = 10 file units)
+    // Return: MWD hot → same as battleship hot (300,000,000 kg = 300,000 file units)
+    hotMass:  300_000,
+    coldMass: 10,
+    isHic:    true,
+  },
+  Custom:                  { hotMass: 0, coldMass: 0 },
 };
 
 /** Format raw value to display string: 300_000 → "300M" */
@@ -77,6 +84,11 @@ export function formatMass(value) {
 
 let _idCounter = 0;
 function uid() { return ++_idCounter; }
+
+/** True if this ship uses Mass Entanglers (near-zero entry, hot return). */
+function _isHic(ship) {
+  return SHIP_CLASSES[ship.shipClass]?.isHic === true;
+}
 
 // ─── Public API ──────────────────────────────────────────────────────────────
 
@@ -98,7 +110,15 @@ export function generatePlan(wormhole, fleet, goal = 'close') {
 
   // ── Ship validation ──────────────────────────────────────────────────────
   fleet.forEach(ship => {
-    if (ship.coldMass > jumpLimit) {
+    if (_isHic(ship)) {
+      // HIC enters with near-zero entangler mass; only the return (hotMass) matters for the limit
+      if (ship.hotMass > jumpLimit) {
+        warnings.push({
+          id: uid(), type: 'hic-cant-return', shipId: ship.id,
+          message: `${ship.pilotName} (HIC) return mass (${formatMass(ship.hotMass)}) exceeds the per-jump limit — cannot return through this wormhole.`,
+        });
+      }
+    } else if (ship.coldMass > jumpLimit) {
       warnings.push({
         id: uid(), type: 'cant-fit', shipId: ship.id,
         message: `${ship.pilotName} (${ship.shipClass}${ship.shipName ? ' — ' + ship.shipName : ''}) cannot fit through this wormhole even cold — excluded.`,
@@ -117,9 +137,16 @@ export function generatePlan(wormhole, fleet, goal = 'close') {
     }
   });
 
+  // HICs are eligible as long as they can return (hotMass <= jumpLimit).
+  // Non-HICs are eligible as long as they can fit cold (coldMass <= jumpLimit).
+  // Within each group, sort heaviest first; HICs always go last (in last, out last).
   const eligible = fleet
-    .filter(s => s.coldMass <= jumpLimit)
-    .sort((a, b) => b.hotMass - a.hotMass);
+    .filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit)
+    .sort((a, b) => {
+      const aHic = _isHic(a), bHic = _isHic(b);
+      if (aHic !== bHic) return aHic ? 1 : -1; // HICs sink to the back
+      return b.hotMass - a.hotMass;
+    });
 
   if (eligible.length === 0) {
     return { items: [], warnings, canReachGoal: false, goal, doorstopShip: null };
@@ -162,8 +189,12 @@ export function recalculatePlan(wormhole, fleet, goal, trackedConsumed, assessme
   if (assessmentAnswer === 'critical') estimatedConsumed = Math.max(trackedConsumed, Math.round(target * 0.9));
 
   const eligible = fleet
-    .filter(s => s.coldMass <= jumpLimit)
-    .sort((a, b) => b.hotMass - a.hotMass);
+    .filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit)
+    .sort((a, b) => {
+      const aHic = _isHic(a), bHic = _isHic(b);
+      if (aHic !== bHic) return aHic ? 1 : -1;
+      return b.hotMass - a.hotMass;
+    });
 
   const doorstopShip = goal === 'doorstop' ? eligible[0] : null;
   const { items } = _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, []);
@@ -323,8 +354,10 @@ function _singlePassGreedy(ships, startRunning, target, goalThreshold, jumpLimit
   const inHole = [];
 
   for (const ship of ships) {
-    const isHot        = ship.hotMass <= jumpLimit;
-    const mass         = isHot ? ship.hotMass : ship.coldMass;
+    // HIC uses Mass Entanglers on entry → near-zero mass (coldMass = 10 file units)
+    const hic          = _isHic(ship);
+    const isHot        = !hic && ship.hotMass <= jumpLimit;
+    const mass         = hic ? ship.coldMass : (isHot ? ship.hotMass : ship.coldMass);
     running           += mass;
     const collapses    = running >= target;
     const isGoalStep   = !goalReached && running >= goalThreshold;
@@ -333,11 +366,10 @@ function _singlePassGreedy(ships, startRunning, target, goalThreshold, jumpLimit
     items.push({
       type: 'step', id: `in-${ship.id}-${uid()}`,
       ship, direction: 'in', isHot, massThisJump: mass, runningTotal: running,
-      collapses, isGoalStep, isStrandingRisk: collapses,
+      collapses, isGoalStep, isStrandingRisk: collapses, isHic: hic,
     });
 
     if (collapses) {
-      // Inbound collapse is only acceptable for the CLOSE goal (goal already reached)
       return { items, canReachGoal: goal === 'close' && goalReached };
     }
     inHole.push(ship);
@@ -355,6 +387,26 @@ function _singlePassGreedy(ships, startRunning, target, goalThreshold, jumpLimit
     const remainMaxHot = remaining.reduce((s, sh) => s + sh.hotMass, 0);
     const afterCold    = running + ship.coldMass;
     const afterHot     = running + ship.hotMass;
+
+    // ── HIC: always returns MWD hot (300M) — bypass greedy cold-first logic ──
+    if (_isHic(ship)) {
+      running          = afterHot;
+      const collapses  = running >= target;
+      const isGoalStep = !goalReached && running >= goalThreshold;
+      if (isGoalStep) goalReached = true;
+      items.push({
+        type: 'step', id: `home-${ship.id}-${uid()}`,
+        ship, direction: 'home', isHot: true, massThisJump: ship.hotMass,
+        runningTotal: running, collapses, isGoalStep,
+        isStrandingRisk: collapses && remaining.length > 0,
+        isHic: true,
+      });
+      if (collapses) {
+        if (goal !== 'close') return { items, canReachGoal: false };
+        if (remaining.length > 0) break;
+      }
+      continue;
+    }
 
     if (afterCold >= target) {
       // Cold return would actually collapse the WH
@@ -443,35 +495,159 @@ function _intermediatePass(eligible, startRunning, target, jumpLimit) {
   let running  = startRunning;
   const inHole = [];
 
-  // Inbound
+  // Inbound — HIC uses near-zero entangler mass; others use hot or cold per limit
   for (const ship of eligible) {
-    const isHot      = ship.hotMass <= jumpLimit;
-    const mass       = isHot ? ship.hotMass : ship.coldMass;
+    const hic        = _isHic(ship);
+    const isHot      = !hic && ship.hotMass <= jumpLimit;
+    const mass       = hic ? ship.coldMass : (isHot ? ship.hotMass : ship.coldMass);
     running         += mass;
     const collapses  = running >= target;
     items.push({
       type: 'step', id: `in-${ship.id}-${uid()}`,
       ship, direction: 'in', isHot, massThisJump: mass, runningTotal: running,
-      collapses, isGoalStep: false, isStrandingRisk: collapses,
+      collapses, isGoalStep: false, isStrandingRisk: collapses, isHic: hic,
     });
     if (collapses) return { items, ok: false, newRunning: running };
     inHole.push(ship);
   }
 
-  // Returns (all cold)
+  // Returns — HIC uses MWD hot on return; others return cold on intermediate passes
   for (let i = 0; i < inHole.length; i++) {
     const ship      = inHole[i];
     const remaining = inHole.slice(i + 1);
-    running        += ship.coldMass;
+    const hic       = _isHic(ship);
+    const retMass   = hic ? ship.hotMass : ship.coldMass;
+    running        += retMass;
     const collapses = running >= target;
     items.push({
       type: 'step', id: `home-${ship.id}-${uid()}`,
-      ship, direction: 'home', isHot: false, massThisJump: ship.coldMass,
+      ship, direction: 'home', isHot: hic, massThisJump: retMass,
       runningTotal: running, collapses, isGoalStep: false,
-      isStrandingRisk: collapses && remaining.length > 0,
+      isStrandingRisk: collapses && remaining.length > 0, isHic: hic,
     });
     if (collapses) return { items, ok: false, newRunning: running };
   }
 
   return { items, ok: true, newRunning: running };
+}
+
+// ─── Plan Validation ──────────────────────────────────────────────────────────
+
+/**
+ * Validate a generated plan for safety and correctness.
+ *
+ * Checks performed:
+ *   1. No pilot's return jump occurs after the wormhole has already collapsed
+ *      (i.e. no stranding — isStrandingRisk === true on any step with remaining
+ *      ships still in the hole).
+ *   2. No single jump exceeds the wormhole's per-jump mass limit.
+ *   3. If a HIC is in the fleet, it enters last and returns last.
+ *   4. Final jump in a close plan lands at or above max mass.
+ *   5. Final jump in a crit/doorstop plan lands below max mass.
+ *
+ * Returns { valid: boolean, warnings: string[], recommendation: string | null }
+ */
+export function validatePlan(plan, wormhole) {
+  if (!plan || !plan.items || plan.items.length === 0) {
+    return { valid: true, warnings: [], recommendation: null };
+  }
+
+  const warnings    = [];
+  const target      = wormhole.totalMass;
+  const jumpLimit   = wormhole.maxIndividualMass;
+  const stepItems   = plan.items.filter(i => i.type === 'step');
+  const goal        = plan.goal ?? 'close';
+  const goalCfg     = GOALS[goal] ?? GOALS.close;
+
+  // ── Check 1: Stranding ──────────────────────────────────────────────────
+  stepItems.forEach((step, idx) => {
+    if (step.isStrandingRisk) {
+      warnings.push(
+        `⚠ STRANDING RISK: Step ${idx + 1} — ${step.ship.pilotName} (${step.ship.shipClass}) — ` +
+        `this jump collapses the wormhole with other pilots still inside.`
+      );
+    }
+  });
+
+  // ── Check 2: Per-jump mass limit ────────────────────────────────────────
+  stepItems.forEach((step, idx) => {
+    if (step.massThisJump > jumpLimit) {
+      warnings.push(
+        `⚠ OVERSIZED: Step ${idx + 1} — ${step.ship.pilotName} (${step.ship.shipClass}) — ` +
+        `${formatMass(step.massThisJump)} exceeds the per-jump limit of ${formatMass(jumpLimit)}.`
+      );
+    }
+  });
+
+  // ── Check 3: HIC placement (in last, out last) ──────────────────────────
+  const inboundSteps = stepItems.filter(s => s.direction === 'in');
+  const returnSteps  = stepItems.filter(s => s.direction === 'home');
+  const hasHic       = stepItems.some(s => s.isHic);
+
+  if (hasHic) {
+    const lastInbound = inboundSteps[inboundSteps.length - 1];
+    if (lastInbound && !lastInbound.isHic) {
+      warnings.push(
+        `⚠ HIC PLACEMENT: ${lastInbound.ship.pilotName} (${lastInbound.ship.shipClass}) enters after the HIC — ` +
+        `HIC should always be the last ship into the hole to minimise inbound mass.`
+      );
+    }
+    const lastReturn = returnSteps[returnSteps.length - 1];
+    if (lastReturn && !lastReturn.isHic) {
+      const hicReturn = returnSteps.find(s => s.isHic);
+      if (hicReturn) {
+        warnings.push(
+          `⚠ HIC PLACEMENT: HIC (${hicReturn.ship.pilotName}) does not return last — ` +
+          `it should be the final ship home to use its 300M return to collapse the wormhole.`
+        );
+      }
+    }
+  }
+
+  // ── Check 4 & 5: Final jump correctness ────────────────────────────────
+  if (stepItems.length > 0) {
+    const lastStep  = stepItems[stepItems.length - 1];
+    const goalThreshold = Math.round(target * goalCfg.threshold);
+
+    if (goal === 'close' && lastStep.runningTotal < target) {
+      warnings.push(
+        `⚠ INCOMPLETE: Final jump does not collapse the wormhole ` +
+        `(${formatMass(lastStep.runningTotal)} / ${formatMass(target)}). ` +
+        `Add more ships or switch to a heavier fleet.`
+      );
+    }
+
+    if ((goal === 'crit' || goal === 'doorstop') && lastStep.runningTotal >= target) {
+      warnings.push(
+        `⚠ OVER-ROLLED: Final return jump collapses the wormhole but goal is ${goalCfg.label}. ` +
+        `Use fewer or lighter ships on the final return.`
+      );
+    }
+
+    if ((goal === 'crit' || goal === 'doorstop') && lastStep.runningTotal < goalThreshold) {
+      warnings.push(
+        `⚠ UNDER-ROLLED: Final jump only reaches ${formatMass(lastStep.runningTotal)} ` +
+        `— goal requires ≥ ${formatMass(goalThreshold)} (${Math.round(goalCfg.threshold * 100)}%).`
+      );
+    }
+  }
+
+  // ── Recommendation ──────────────────────────────────────────────────────
+  let recommendation = null;
+  const hasStranding = warnings.some(w => w.includes('STRANDING'));
+
+  if (hasStranding) {
+    const strandStep  = stepItems.find(s => s.isStrandingRisk);
+    const pilotName   = strandStep?.ship.pilotName ?? 'a pilot';
+    const shipClass   = strandStep?.ship.shipClass ?? 'ship';
+    recommendation =
+      `Option A — Swap ${pilotName}'s ${shipClass} for a Cruiser or Battlecruiser ` +
+      `to reduce mass on the final return jump.\n` +
+      `Option B — Add a HIC with Mass Entanglers as the final ship: it enters near-zero mass ` +
+      `and returns MWD hot (300M) to safely collapse the wormhole last.\n` +
+      `Option C — Reduce fleet size so fewer ships are in the hole at once ` +
+      `(the engine already tried this automatically).`;
+  }
+
+  return { valid: warnings.length === 0, warnings, recommendation };
 }

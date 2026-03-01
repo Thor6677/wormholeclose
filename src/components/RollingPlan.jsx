@@ -1,4 +1,4 @@
-import { formatMass, GOALS } from '../rollingEngine.js';
+import { formatMass, GOALS, validatePlan } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
 
 // Per-goal badge styling (full Tailwind strings required — no dynamic interpolation)
@@ -34,9 +34,14 @@ function StepRow({ step, index, goal }) {
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 flex-wrap">
           <span className="font-medium text-slate-100 text-sm">{step.ship.pilotName}</span>
-          <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${step.isHot ? 'bg-orange-900/50 text-orange-300' : 'bg-slate-700 text-slate-400'}`}>
-            {step.isHot ? 'HOT' : 'COLD'}
-          </span>
+          {step.isHic
+            ? isIn
+              ? <span className="text-xs px-1.5 py-0.5 rounded font-bold bg-cyan-900/60 text-cyan-300">ENTANGLERS</span>
+              : <span className="text-xs px-1.5 py-0.5 rounded font-bold bg-orange-900/50 text-orange-300">MWD HOT</span>
+            : <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${step.isHot ? 'bg-orange-900/50 text-orange-300' : 'bg-slate-700 text-slate-400'}`}>
+                {step.isHot ? 'HOT' : 'COLD'}
+              </span>
+          }
           {isGoalStep && (
             <span className={`text-xs px-1.5 py-0.5 rounded font-bold ${badgeCls}`}>
               {goalCfg.badge}
@@ -51,7 +56,12 @@ function StepRow({ step, index, goal }) {
         <div className="text-slate-500 text-xs mt-0.5">
           {step.ship.shipClass}{step.ship.shipName ? ` — ${step.ship.shipName}` : ''}
           <span className="ml-2 text-slate-600">
-            {isIn ? 'into hole' : 'home'}
+            {step.isHic
+              ? isIn
+                ? 'into hole (Mass Entanglers active — near zero mass)'
+                : 'home (MWD hot — 300M)'
+              : isIn ? 'into hole' : 'home'
+            }
           </span>
         </div>
       </div>
@@ -127,8 +137,10 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
   const lastStep   = [...annotated].reverse().find(i => i.type === 'step');
   const lastTotal  = lastStep?.runningTotal ?? 0;
   const stepItems  = annotated.filter(i => i.type === 'step');
-  const hasStrand  = stepItems.some(s => s.isStrandingRisk);
   const canReachGoal = plan.canReachGoal;
+
+  const validation = validatePlan(plan, wormhole);
+  const planIsBlocked = !validation.valid;
 
   let stepIndex = 0;
 
@@ -205,19 +217,46 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
           </div>
         </div>
 
-        {hasStrand && (
-          <div className="p-3 rounded-xl text-xs text-red-300 bg-red-950/20 border border-red-500/30">
-            <strong>Red steps</strong> indicate a pilot would be stranded when the wormhole collapses. Reduce the fleet size or switch goal.
+        {/* Safety validation panel — shown when plan has risks */}
+        {validation.warnings.length > 0 && (
+          <div className="rounded-2xl border border-red-500/50 bg-red-950/20 overflow-hidden">
+            <div className="px-4 py-3 border-b border-red-500/30 flex items-center gap-2">
+              <span className="text-red-400 text-base">🚨</span>
+              <span className="text-red-300 text-sm font-bold uppercase tracking-wide">Safety Warning — No Pilot Left Behind</span>
+            </div>
+            <div className="px-4 py-3 space-y-2">
+              {validation.warnings.map((w, i) => (
+                <div key={i} className="text-red-200 text-xs leading-relaxed">{w}</div>
+              ))}
+            </div>
+            {validation.recommendation && (
+              <div className="px-4 py-3 border-t border-red-500/20 bg-red-950/10">
+                <div className="text-xs text-slate-400 font-semibold uppercase tracking-wide mb-2">Recommended Fixes</div>
+                {validation.recommendation.split('\n').map((line, i) => (
+                  <div key={i} className="text-slate-300 text-xs leading-relaxed mb-1">{line}</div>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
-        <button
-          onClick={() => onStart(plan.items)}
-          disabled={annotated.length === 0 || !canReachGoal}
-          className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed transition-colors text-lg"
-        >
-          Start {goalCfg.shortLabel} Run →
-        </button>
+        {/* Start button — hidden (not just disabled) when plan is unsafe */}
+        {planIsBlocked || !canReachGoal ? (
+          <div className="w-full py-4 rounded-xl text-center text-sm font-semibold text-slate-600 bg-slate-800 border border-slate-700 cursor-not-allowed select-none">
+            {!canReachGoal
+              ? '⚠ Cannot reach goal — add more ships'
+              : '🚫 Plan blocked — fix safety warnings above before starting'
+            }
+          </div>
+        ) : (
+          <button
+            onClick={() => onStart(plan.items)}
+            disabled={annotated.length === 0}
+            className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 disabled:bg-slate-800 disabled:text-slate-600 disabled:cursor-not-allowed transition-colors text-lg"
+          >
+            Start {goalCfg.shortLabel} Run →
+          </button>
+        )}
       </div>
     </div>
   );
