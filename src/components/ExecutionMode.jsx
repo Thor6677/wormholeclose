@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { formatMass, GOALS, recalculatePlan, generateClosingStep } from '../rollingEngine.js';
+import { formatMass, GOALS, respondToStatus, estimateRemainingMass, generateClosingStep } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
 import SideTracker from './SideTracker.jsx';
 
@@ -87,79 +87,16 @@ function DoneScreen({ wormhole, result, onReset, doorstopShip, onCloseNow }) {
   );
 }
 
-function AssessmentScreen({ item, onAnswer }) {
-  return (
-    <div className="min-h-screen bg-slate-950 flex flex-col items-center justify-center px-6 text-center">
-      <div className="text-6xl mb-6">❓</div>
-      <h1 className="text-3xl font-bold text-slate-100 mb-2 tracking-tight">
-        Pass {item.passNumber} Complete
-      </h1>
-      <p className="text-slate-400 text-base mb-8">
-        How does the wormhole look right now?
-      </p>
-      <div className="w-full max-w-xs flex flex-col gap-3">
-        <button
-          onClick={() => onAnswer('not_reduced')}
-          className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-slate-300 hover:bg-slate-100 active:bg-slate-400 transition-colors text-base"
-        >
-          Not Reduced
-          <div className="text-xs text-slate-600 font-normal mt-0.5">Looks fresh / still full-sized</div>
-        </button>
-        <button
-          onClick={() => onAnswer('reduced')}
-          className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors text-base"
-        >
-          Reduced ⬇
-          <div className="text-xs text-amber-800 font-normal mt-0.5">Visually smaller — ≥50% consumed</div>
-        </button>
-        <button
-          onClick={() => onAnswer('critical')}
-          className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-red-400 hover:bg-red-300 active:bg-red-500 transition-colors text-base"
-        >
-          Critical ⚠
-          <div className="text-xs text-red-800 font-normal mt-0.5">Flashing / almost gone — ≥90% consumed</div>
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function StateCheckPanel({ onPick }) {
-  const options = [
-    { value: 'fresh',    label: 'Fresh',    cls: 'bg-slate-600 text-slate-200 hover:bg-slate-500 active:bg-slate-700' },
-    { value: 'reduced',  label: 'Reduced',  cls: 'bg-amber-700 text-amber-100 hover:bg-amber-600 active:bg-amber-800' },
-    { value: 'critical', label: 'Critical', cls: 'bg-red-700 text-red-100 hover:bg-red-600 active:bg-red-800'         },
-    { value: 'skip',     label: 'Skip',     cls: 'bg-slate-700 text-slate-400 hover:bg-slate-600 active:bg-slate-800' },
-  ];
-  return (
-    <div className="rounded-xl border border-slate-600 bg-slate-800 p-3">
-      <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2 text-center">
-        WH State Update?
-      </div>
-      <div className="grid grid-cols-4 gap-2">
-        {options.map(opt => (
-          <button
-            key={opt.value}
-            onClick={() => onPick(opt.value)}
-            className={`py-2 rounded-lg text-xs font-semibold transition-colors ${opt.cls}`}
-          >
-            {opt.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'close', doorstopShip, onReset }) {
-  const [items,          setItems]          = useState(initialItems);
-  const [currentIdx,     setCurrentIdx]     = useState(0);
-  const [showTracker,    setShowTracker]    = useState(false);
-  const [closingStep,    setClosingStep]    = useState(null);
-  // null | 'post-done' (after Done press) | 'replan' (via Replan button)
-  const [stateCheckMode, setStateCheckMode] = useState(null);
+  const [items,             setItems]             = useState(initialItems);
+  const [currentIdx,        setCurrentIdx]        = useState(0);
+  const [showTracker,       setShowTracker]       = useState(false);
+  const [closingStep,       setClosingStep]       = useState(null);
+  // Reduction tracking — set when FC confirms "Wormhole Reduced" at pass end
+  const [reductionObserved, setReductionObserved] = useState(false);
+  const [reductionAtMass,   setReductionAtMass]   = useState(0);
 
   // Resolve current item (may have been replaced by a closing step)
   const activeItems = useMemo(
@@ -169,6 +106,17 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
   const item     = currentIdx < activeItems.length ? activeItems[currentIdx] : null;
   const itemType = item?.type ?? null;
 
+  // consumedFloor = sum of (massThisJump × 1.1) for all confirmed jumps.
+  // Pessimistic lower bound on actual mass consumed through the wormhole.
+  const consumedFloor = useMemo(() => {
+    let floor = 0;
+    for (let i = 0; i < currentIdx; i++) {
+      const it = activeItems[i];
+      if (it?.type === 'step') floor += Math.round(it.massThisJump * 1.1);
+    }
+    return floor;
+  }, [activeItems, currentIdx]);
+
   // Auto-skip standing-by items — they are shown in the plan view but skipped in execution
   useEffect(() => {
     if (currentIdx < activeItems.length && activeItems[currentIdx]?.type === 'standing-by') {
@@ -176,41 +124,17 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
     }
   }, [currentIdx, activeItems]);
 
-  // ── Assessment handler ──────────────────────────────────────────────────────
-  function handleAssessment(answer) {
+  // ── Pass-end status handler (mandatory gate between passes) ────────────────
+  function handlePassConfirmation(status) {
     const completedItems = activeItems.slice(0, currentIdx);
-    let currentTotal = 0;
-    for (let i = completedItems.length - 1; i >= 0; i--) {
-      if (completedItems[i].type === 'step') { currentTotal = completedItems[i].runningTotal; break; }
-    }
     const { homeSide, holeSide } = computeSides(completedItems, fleet);
-    const stateMap = { not_reduced: 'fresh', reduced: 'reduced', critical: 'critical' };
-    const confirmedState = stateMap[answer] ?? 'unknown';
-    const newTail = recalculatePlan(completedItems, currentTotal, confirmedState, homeSide, holeSide, fleet, wormhole, goal);
-    // Replace everything from current index onwards
-    setItems([...activeItems.slice(0, currentIdx), ...newTail]);
+    const session = { consumedFloor, reductionObserved, reductionAtMass, holeSide, homeSide };
+    const { updatedSession, newSteps } = respondToStatus(status, session, fleet, wormhole, goal);
+    setReductionObserved(updatedSession.reductionObserved);
+    setReductionAtMass(updatedSession.reductionAtMass);
+    // Replace assessment item and everything after it with new steps
+    setItems([...activeItems.slice(0, currentIdx), ...newSteps]);
     setCurrentIdx(currentIdx);
-  }
-
-  // ── State update handler (post-Done or Replan button) ───────────────────────
-  function handleStateUpdate(confirmedState) {
-    const isPostDone = stateCheckMode === 'post-done';
-    if (confirmedState !== 'skip') {
-      // post-done: include current step as completed; replan: only items before current
-      const sliceEnd = isPostDone ? currentIdx + 1 : currentIdx;
-      const completedItems = activeItems.slice(0, sliceEnd);
-      let currentTotal = 0;
-      for (let i = completedItems.length - 1; i >= 0; i--) {
-        if (completedItems[i].type === 'step') { currentTotal = completedItems[i].runningTotal; break; }
-      }
-      const { homeSide, holeSide } = computeSides(completedItems, fleet);
-      const newTail = recalculatePlan(completedItems, currentTotal, confirmedState, homeSide, holeSide, fleet, wormhole, goal);
-      setItems([...activeItems.slice(0, sliceEnd), ...newTail]);
-      if (isPostDone) setCurrentIdx(sliceEnd);
-    } else if (isPostDone) {
-      setCurrentIdx(i => i + 1);
-    }
-    setStateCheckMode(null);
   }
 
   // ── Doorstop close-now handler ──────────────────────────────────────────────
@@ -270,15 +194,14 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
     );
   }
 
-  // ── Assessment screen ───────────────────────────────────────────────────────
+  // ── Pass-end status gate ────────────────────────────────────────────────────
   if (itemType === 'assessment') {
+    const massEst = estimateRemainingMass(wormhole, consumedFloor, reductionObserved, reductionAtMass);
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
         {/* Top bar */}
         <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between shrink-0">
-          <div className="flex items-center gap-3">
-            <span className="text-slate-500 font-mono text-sm">{wormhole.type}</span>
-          </div>
+          <span className="text-slate-500 font-mono text-sm">{wormhole.type}</span>
           <button
             onClick={() => setCurrentIdx(i => Math.max(0, i - 1))}
             disabled={currentIdx === 0}
@@ -295,35 +218,38 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
               <span>{formatMass(massConsumedSoFar)}</span>
               <span>{formatMass(wormhole.totalMass)}</span>
             </div>
+            <div className="text-center text-xs text-slate-600 mt-1">
+              Est. remaining: ~{formatMass(massEst.pessimistic)} – ~{formatMass(massEst.optimistic)}
+            </div>
           </div>
 
-          <div className="flex-1 flex flex-col items-center justify-center gap-6 py-8">
-            <div className="text-6xl">❓</div>
+          <div className="flex-1 flex flex-col items-center justify-center gap-6 py-6">
             <div className="text-center">
-              <h2 className="text-2xl font-bold text-slate-100 mb-2">Pass {item.passNumber} Complete</h2>
-              <p className="text-slate-400 text-sm">How does the wormhole look right now?</p>
+              <div className="text-4xl mb-3">🕳</div>
+              <h2 className="text-2xl font-bold text-slate-100 mb-1">Pass {item.passNumber} complete.</h2>
+              <p className="text-slate-400 text-sm">Check the hole.</p>
             </div>
             <div className="w-full flex flex-col gap-3 max-w-xs">
               <button
-                onClick={() => handleAssessment('not_reduced')}
-                className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-slate-300 hover:bg-slate-100 active:bg-slate-400 transition-colors"
+                onClick={() => handlePassConfirmation('no_change')}
+                className="w-full py-5 rounded-2xl font-bold text-slate-100 text-lg bg-slate-700 hover:bg-slate-600 active:bg-slate-800 transition-colors"
               >
-                Not Reduced
-                <div className="text-xs text-slate-600 font-normal mt-0.5">Looks full-sized</div>
+                No Change
+                <div className="text-xs text-slate-400 font-normal mt-1">Looks the same as before</div>
               </button>
               <button
-                onClick={() => handleAssessment('reduced')}
-                className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors"
+                onClick={() => handlePassConfirmation('reduced')}
+                className="w-full py-5 rounded-2xl font-bold text-slate-900 text-lg bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors"
               >
-                Reduced ⬇
-                <div className="text-xs text-amber-800 font-normal mt-0.5">Visually smaller — ≥50% gone</div>
+                Wormhole Reduced
+                <div className="text-xs text-amber-800 font-normal mt-1">Visually smaller — ≈50% consumed</div>
               </button>
               <button
-                onClick={() => handleAssessment('critical')}
-                className="w-full py-4 rounded-xl font-semibold text-slate-900 bg-red-400 hover:bg-red-300 active:bg-red-500 transition-colors"
+                onClick={() => handlePassConfirmation('critical')}
+                className="w-full py-5 rounded-2xl font-bold text-white text-lg bg-red-600 hover:bg-red-500 active:bg-red-700 transition-colors"
               >
-                Critical ⚠
-                <div className="text-xs text-red-800 font-normal mt-0.5">Flashing — ≥90% gone</div>
+                Wormhole Critical
+                <div className="text-xs text-red-200 font-normal mt-1">Flashing / almost gone — ≈90% consumed</div>
               </button>
             </div>
           </div>
@@ -472,25 +398,16 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
             {currentStepNumber} <span className="text-slate-600">/ {stepItems.length}</span>
           </span>
         </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={() => setStateCheckMode('replan')}
-            disabled={stateCheckMode !== null}
-            className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
-          >
-            Replan
-          </button>
-          <button
-            onClick={() => setShowTracker(t => !t)}
-            className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-              showTracker
-                ? 'bg-slate-700 border-slate-600 text-slate-200'
-                : 'border-slate-700 text-slate-500 hover:text-slate-300'
-            }`}
-          >
-            Tracker
-          </button>
-        </div>
+        <button
+          onClick={() => setShowTracker(t => !t)}
+          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+            showTracker
+              ? 'bg-slate-700 border-slate-600 text-slate-200'
+              : 'border-slate-700 text-slate-500 hover:text-slate-300'
+          }`}
+        >
+          Tracker
+        </button>
       </div>
 
       <div className="flex-1 flex flex-col px-4 py-4 gap-3 overflow-y-auto">
@@ -502,6 +419,14 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
             <span>{formatMass(massConsumedSoFar)}</span>
             <span>{formatMass(wormhole.totalMass)}</span>
           </div>
+          {(() => {
+            const est = estimateRemainingMass(wormhole, consumedFloor, reductionObserved, reductionAtMass);
+            return (
+              <div className="text-center text-xs text-slate-700 mt-0.5">
+                Est. remaining: ~{formatMass(est.pessimistic)} – ~{formatMass(est.optimistic)}
+              </div>
+            );
+          })()}
         </div>
 
         {/* Side tracker */}
@@ -636,22 +561,17 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
           </div>
         </div>
 
-        {/* State check panel — shown after Done or via Replan button */}
-        {stateCheckMode !== null && (
-          <StateCheckPanel onPick={handleStateUpdate} />
-        )}
-
         {/* Controls */}
         <div className="grid grid-cols-2 gap-3 shrink-0">
           <button
             onClick={() => setCurrentIdx(i => Math.max(0, i - 1))}
-            disabled={currentIdx === 0 || stateCheckMode !== null}
+            disabled={currentIdx === 0}
             className="py-5 rounded-xl font-semibold text-base border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             ← Undo
           </button>
           <button
-            onClick={() => stateCheckMode === null && setStateCheckMode('post-done')}
+            onClick={() => setCurrentIdx(i => i + 1)}
             className={`py-5 rounded-xl font-semibold text-base text-slate-900 ${doneColor} transition-colors`}
           >
             Done ✓

@@ -530,6 +530,138 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
   return items;
 }
 
+// ─── Mass estimation ──────────────────────────────────────────────────────────
+
+/**
+ * Estimate remaining wormhole mass from confirmed jumps and FC observations.
+ *
+ * consumedFloor = sum of (massThisJump × 1.10) for all confirmed jumps —
+ *   the pessimistic lower bound on how much the hole has consumed.
+ *
+ * Before any reduction observed:
+ *   pessimistic = statedMax × 0.90 − consumedFloor  (hole might accept 10% less)
+ *   optimistic  = statedMax       − consumedFloor
+ *
+ * After FC confirms "Wormhole Reduced" (≈50% consumed at that moment):
+ *   estimatedTotal = reductionAtMass / 0.50
+ *   pessimistic    = estimatedTotal   − consumedFloor
+ *   optimistic     = statedMax        − consumedFloor
+ *
+ * @param {object}  wormhole
+ * @param {number}  consumedFloor      Sum of massThisJump×1.1 for all done steps
+ * @param {boolean} reductionObserved  FC confirmed "Wormhole Reduced"
+ * @param {number}  reductionAtMass    consumedFloor when reduction was confirmed
+ * @returns {{ pessimistic: number, optimistic: number }}
+ */
+export function estimateRemainingMass(wormhole, consumedFloor, reductionObserved, reductionAtMass) {
+  const statedMax = wormhole.totalMass;
+
+  if (reductionObserved && reductionAtMass > 0) {
+    const estimatedTotal = Math.round(reductionAtMass / 0.5);
+    return {
+      pessimistic: Math.max(0, estimatedTotal - consumedFloor),
+      optimistic:  Math.max(0, statedMax      - consumedFloor),
+    };
+  }
+
+  return {
+    pessimistic: Math.max(0, Math.round(statedMax * 0.9) - consumedFloor),
+    optimistic:  Math.max(0, statedMax - consumedFloor),
+  };
+}
+
+/**
+ * Build the critical closing sequence from actual pilot positions.
+ *
+ * Return order for in-hole pilots: lightest cold mass first (preserves mass
+ * for the remaining pilots' returns).
+ *
+ * Closing sequence priority:
+ *   1. HIC with Mass Entanglers (cold in ≈0M, hot back → collapses)
+ *   2. Lightest eligible home ship (cold in, hot back → collapses)
+ *
+ * Delegates to getCritStrategy() with the corrected sort orders applied.
+ *
+ * @param {Array}  holeSide     Ships currently in the hole
+ * @param {Array}  homeSide     Ships currently at home
+ * @param {number} runningTotal Mass consumed so far (consumedFloor)
+ * @param {object} wormhole
+ * @param {string} goal
+ * @returns {Array} Plan items (steps + optional outcome)
+ */
+export function buildCritClosingSequence(holeSide, homeSide, runningTotal, wormhole, goal) {
+  const jumpLimit = wormhole.maxIndividualMass;
+
+  // Return hole pilots lightest-cold-first to preserve mass for later returns
+  const eligibleHole = holeSide
+    .filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit)
+    .sort((a, b) => a.coldMass - b.coldMass);
+
+  // Home pilots for closing: HICs first (near-zero entry, hot collapse), then lightest non-HIC
+  const eligibleHome = homeSide.filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit);
+  const hics    = eligibleHome.filter(s =>  _isHic(s));
+  const nonHics = eligibleHome.filter(s => !_isHic(s)).sort((a, b) => a.coldMass - b.coldMass);
+  const closingOrder = [...hics, ...nonHics];
+
+  const doorstopShip = goal === 'doorstop' ? (closingOrder[0] ?? null) : null;
+  return getCritStrategy(eligibleHole, closingOrder, runningTotal, wormhole, goal, doorstopShip);
+}
+
+/**
+ * Central entry point called when the FC taps a pass-end status button.
+ *
+ * Updates session state (reduction tracking) and returns a fresh plan tail.
+ *
+ * @param {'no_change'|'reduced'|'critical'} status
+ * @param {{ consumedFloor, reductionObserved, reductionAtMass, holeSide, homeSide }} currentSession
+ * @param {Array}  fleet
+ * @param {object} wormhole
+ * @param {string} goal
+ * @returns {{ updatedSession: object, newSteps: Array }}
+ */
+export function respondToStatus(status, currentSession, fleet, wormhole, goal) {
+  const { consumedFloor, reductionObserved, reductionAtMass, holeSide, homeSide } = currentSession;
+  const jumpLimit = wormhole.maxIndividualMass;
+
+  const updatedSession = { ...currentSession };
+
+  // ── Critical: evacuate hole, then close ──────────────────────────────────
+  if (status === 'critical') {
+    const newSteps = buildCritClosingSequence(holeSide, homeSide, consumedFloor, wormhole, goal);
+    return { updatedSession, newSteps };
+  }
+
+  // ── Reduced: record when first observed ──────────────────────────────────
+  if (status === 'reduced' && !reductionObserved) {
+    updatedSession.reductionObserved = true;
+    updatedSession.reductionAtMass   = consumedFloor;
+  }
+
+  // ── Compute effective wormhole using pessimistic mass estimate ────────────
+  let effectiveWormhole = wormhole;
+  if (updatedSession.reductionObserved) {
+    const { pessimistic } = estimateRemainingMass(
+      wormhole, consumedFloor,
+      updatedSession.reductionObserved, updatedSession.reductionAtMass,
+    );
+    // Effective total = what we've burned + pessimistic remaining
+    effectiveWormhole = { ...wormhole, totalMass: consumedFloor + pessimistic };
+  }
+
+  // ── Replan from consumedFloor with effective wormhole ────────────────────
+  const eligible = fleet
+    .filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit)
+    .sort((a, b) => {
+      const aHic = _isHic(a), bHic = _isHic(b);
+      if (aHic !== bHic) return aHic ? 1 : -1;
+      return b.hotMass - a.hotMass;
+    });
+
+  const doorstopShip = goal === 'doorstop' ? eligible[0] : null;
+  const { items }    = _buildPlan(eligible, consumedFloor, effectiveWormhole, goal, doorstopShip, []);
+  return { updatedSession, newSteps: items };
+}
+
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
