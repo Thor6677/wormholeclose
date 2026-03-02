@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { formatMass, GOALS, recalculatePlan, generateClosingStep } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
 import SideTracker from './SideTracker.jsx';
@@ -34,6 +34,24 @@ const GOAL_CARD = {
   crit:     { border: 'border-orange-500',  bg: 'bg-orange-950/20',  done: 'bg-orange-400 hover:bg-orange-300 active:bg-orange-500'   },
   doorstop: { border: 'border-violet-500',  bg: 'bg-violet-950/20',  done: 'bg-violet-400 hover:bg-violet-300 active:bg-violet-500'   },
 };
+
+/**
+ * Derive which pilots are home vs in hole based on completed plan items.
+ * direction='in' moves a ship into the hole; direction='home' brings it back.
+ */
+function computeSides(completedItems, fleet) {
+  const homeIds = new Set(fleet.map(s => s.id));
+  const holeIds = new Set();
+  for (const it of completedItems) {
+    if (it.type !== 'step') continue;
+    if (it.direction === 'in') { homeIds.delete(it.ship.id); holeIds.add(it.ship.id); }
+    else                       { holeIds.delete(it.ship.id); homeIds.add(it.ship.id); }
+  }
+  return {
+    homeSide: fleet.filter(s => homeIds.has(s.id)),
+    holeSide: fleet.filter(s => holeIds.has(s.id)),
+  };
+}
 
 // ─── Sub-screens ──────────────────────────────────────────────────────────────
 
@@ -106,38 +124,93 @@ function AssessmentScreen({ item, onAnswer }) {
   );
 }
 
+function StateCheckPanel({ onPick }) {
+  const options = [
+    { value: 'fresh',    label: 'Fresh',    cls: 'bg-slate-600 text-slate-200 hover:bg-slate-500 active:bg-slate-700' },
+    { value: 'reduced',  label: 'Reduced',  cls: 'bg-amber-700 text-amber-100 hover:bg-amber-600 active:bg-amber-800' },
+    { value: 'critical', label: 'Critical', cls: 'bg-red-700 text-red-100 hover:bg-red-600 active:bg-red-800'         },
+    { value: 'skip',     label: 'Skip',     cls: 'bg-slate-700 text-slate-400 hover:bg-slate-600 active:bg-slate-800' },
+  ];
+  return (
+    <div className="rounded-xl border border-slate-600 bg-slate-800 p-3">
+      <div className="text-xs text-slate-400 font-semibold uppercase tracking-wider mb-2 text-center">
+        WH State Update?
+      </div>
+      <div className="grid grid-cols-4 gap-2">
+        {options.map(opt => (
+          <button
+            key={opt.value}
+            onClick={() => onPick(opt.value)}
+            className={`py-2 rounded-lg text-xs font-semibold transition-colors ${opt.cls}`}
+          >
+            {opt.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'close', doorstopShip, onReset }) {
-  const [items,       setItems]       = useState(initialItems);
-  const [currentIdx,  setCurrentIdx]  = useState(0);
-  const [showTracker, setShowTracker] = useState(false);
-  // When doorstop is active and user presses Close Now, we push a closing step
-  const [closingStep, setClosingStep] = useState(null);
+  const [items,          setItems]          = useState(initialItems);
+  const [currentIdx,     setCurrentIdx]     = useState(0);
+  const [showTracker,    setShowTracker]    = useState(false);
+  const [closingStep,    setClosingStep]    = useState(null);
+  // null | 'post-done' (after Done press) | 'replan' (via Replan button)
+  const [stateCheckMode, setStateCheckMode] = useState(null);
 
   // Resolve current item (may have been replaced by a closing step)
-  const activeItems  = closingStep ? [...items, closingStep] : items;
-  const item         = currentIdx < activeItems.length ? activeItems[currentIdx] : null;
-  const itemType     = item?.type ?? null;
+  const activeItems = useMemo(
+    () => closingStep ? [...items, closingStep] : items,
+    [items, closingStep],
+  );
+  const item     = currentIdx < activeItems.length ? activeItems[currentIdx] : null;
+  const itemType = item?.type ?? null;
+
+  // Auto-skip standing-by items — they are shown in the plan view but skipped in execution
+  useEffect(() => {
+    if (currentIdx < activeItems.length && activeItems[currentIdx]?.type === 'standing-by') {
+      setCurrentIdx(i => i + 1);
+    }
+  }, [currentIdx, activeItems]);
 
   // ── Assessment handler ──────────────────────────────────────────────────────
   function handleAssessment(answer) {
-    // Find the runningTotal from the last completed step before this assessment
-    let trackedConsumed = 0;
-    for (let i = currentIdx - 1; i >= 0; i--) {
-      if (activeItems[i].type === 'step') {
-        trackedConsumed = activeItems[i].runningTotal;
-        break;
-      }
+    const completedItems = activeItems.slice(0, currentIdx);
+    let currentTotal = 0;
+    for (let i = completedItems.length - 1; i >= 0; i--) {
+      if (completedItems[i].type === 'step') { currentTotal = completedItems[i].runningTotal; break; }
     }
-
-    const newTail = recalculatePlan(wormhole, fleet, goal, trackedConsumed, answer);
+    const { homeSide, holeSide } = computeSides(completedItems, fleet);
+    const stateMap = { not_reduced: 'fresh', reduced: 'reduced', critical: 'critical' };
+    const confirmedState = stateMap[answer] ?? 'unknown';
+    const newTail = recalculatePlan(completedItems, currentTotal, confirmedState, homeSide, holeSide, fleet, wormhole, goal);
     // Replace everything from current index onwards
-    const newItems = [...activeItems.slice(0, currentIdx), ...newTail];
-    setItems(newItems);
-    // Don't advance — the first item of newTail is now at currentIdx
-    // (but we DO advance past the assessment item itself)
+    setItems([...activeItems.slice(0, currentIdx), ...newTail]);
     setCurrentIdx(currentIdx);
+  }
+
+  // ── State update handler (post-Done or Replan button) ───────────────────────
+  function handleStateUpdate(confirmedState) {
+    const isPostDone = stateCheckMode === 'post-done';
+    if (confirmedState !== 'skip') {
+      // post-done: include current step as completed; replan: only items before current
+      const sliceEnd = isPostDone ? currentIdx + 1 : currentIdx;
+      const completedItems = activeItems.slice(0, sliceEnd);
+      let currentTotal = 0;
+      for (let i = completedItems.length - 1; i >= 0; i--) {
+        if (completedItems[i].type === 'step') { currentTotal = completedItems[i].runningTotal; break; }
+      }
+      const { homeSide, holeSide } = computeSides(completedItems, fleet);
+      const newTail = recalculatePlan(completedItems, currentTotal, confirmedState, homeSide, holeSide, fleet, wormhole, goal);
+      setItems([...activeItems.slice(0, sliceEnd), ...newTail]);
+      if (isPostDone) setCurrentIdx(sliceEnd);
+    } else if (isPostDone) {
+      setCurrentIdx(i => i + 1);
+    }
+    setStateCheckMode(null);
   }
 
   // ── Doorstop close-now handler ──────────────────────────────────────────────
@@ -399,16 +472,25 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
             {currentStepNumber} <span className="text-slate-600">/ {stepItems.length}</span>
           </span>
         </div>
-        <button
-          onClick={() => setShowTracker(t => !t)}
-          className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
-            showTracker
-              ? 'bg-slate-700 border-slate-600 text-slate-200'
-              : 'border-slate-700 text-slate-500 hover:text-slate-300'
-          }`}
-        >
-          Tracker
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={() => setStateCheckMode('replan')}
+            disabled={stateCheckMode !== null}
+            className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-300 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+          >
+            Replan
+          </button>
+          <button
+            onClick={() => setShowTracker(t => !t)}
+            className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
+              showTracker
+                ? 'bg-slate-700 border-slate-600 text-slate-200'
+                : 'border-slate-700 text-slate-500 hover:text-slate-300'
+            }`}
+          >
+            Tracker
+          </button>
+        </div>
       </div>
 
       <div className="flex-1 flex flex-col px-4 py-4 gap-3 overflow-y-auto">
@@ -554,17 +636,22 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
           </div>
         </div>
 
+        {/* State check panel — shown after Done or via Replan button */}
+        {stateCheckMode !== null && (
+          <StateCheckPanel onPick={handleStateUpdate} />
+        )}
+
         {/* Controls */}
         <div className="grid grid-cols-2 gap-3 shrink-0">
           <button
             onClick={() => setCurrentIdx(i => Math.max(0, i - 1))}
-            disabled={currentIdx === 0}
+            disabled={currentIdx === 0 || stateCheckMode !== null}
             className="py-5 rounded-xl font-semibold text-base border border-slate-700 text-slate-400 hover:text-slate-100 hover:border-slate-500 active:bg-slate-800 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
           >
             ← Undo
           </button>
           <button
-            onClick={() => setCurrentIdx(i => i + 1)}
+            onClick={() => stateCheckMode === null && setStateCheckMode('post-done')}
             className={`py-5 rounded-xl font-semibold text-base text-slate-900 ${doneColor} transition-colors`}
           >
             Done ✓

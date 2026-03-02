@@ -23,6 +23,10 @@
  *   { type: 'hold-back', id, passNumber, sittingOut: Ship[], reason }
  *     → Shown before a subset pass: which ships are held out this pass and why.
  *
+ *   { type: 'standing-by', id, ship, reason }
+ *     → Ship is in the fleet but not jumping this pass (or ever, if goal already reached).
+ *     → Every eligible ship must appear as at least one step OR standing-by.
+ *
  * ─── Assessment answers ─────────────────────────────────────────────────────
  *   'not_reduced' — WH still looks fresh (>50% mass remaining)
  *   'reduced'     — WH is visually reduced  (≤50% remaining ≈ ≥50% consumed)
@@ -598,19 +602,52 @@ export function generatePlan(wormhole, fleet, goal = 'close') {
 
   const { items, canReachGoal } = _buildPlan(eligible, 0, wormhole, goal, doorstopShip, warnings);
 
+  // Assertion: every eligible ship must appear as a step or standing-by entry.
+  const coveredIds = new Set(
+    items.filter(i => i.type === 'step' || i.type === 'standing-by').map(i => i.ship.id),
+  );
+  const missing = eligible.filter(s => !coveredIds.has(s.id) && s.id !== doorstopShip?.id);
+  if (missing.length > 0) {
+    console.error(
+      '[rollingEngine] BUG: ships missing from plan:',
+      missing.map(s => `${s.pilotName} (${s.shipClass})`).join(', '),
+    );
+  }
+
   return { items, warnings, canReachGoal, goal, doorstopShip };
 }
 
 /**
- * Regenerate the plan tail after an assessment answer.
+ * Regenerate the plan tail using confirmed wormhole state.
+ *
+ * State-aware strategy:
+ *   'fresh'    → plan normally from currentTotal
+ *   'unknown'  → plan normally from currentTotal
+ *   'reduced'  → conservative: effectiveTotal = currentTotal + remaining × 0.6
+ *   'critical' → getCritStrategy(holeSide, homeSide, ...) — cold in / hot back
+ *
+ * @param {Array}   completedSteps  All items completed so far (used for side tracking)
+ * @param {number}  currentTotal    Mass consumed so far
+ * @param {string}  confirmedState  'fresh'|'reduced'|'critical'|'unknown'
+ * @param {Array}   homeSide        Pilots currently at home
+ * @param {Array}   holeSide        Pilots currently in the hole
+ * @param {Array}   fleet           Full fleet roster
+ * @param {object}  wormhole        { totalMass, maxIndividualMass, ... }
+ * @param {string}  goal            Original goal (unchanged)
+ * @returns {Array} New plan tail (items[])
  */
-export function recalculatePlan(wormhole, fleet, goal, trackedConsumed, assessmentAnswer) {
+export function recalculatePlan(
+  completedSteps,
+  currentTotal,
+  confirmedState,
+  homeSide,
+  holeSide,
+  fleet,
+  wormhole,
+  goal,
+) {
   const target    = wormhole.totalMass;
   const jumpLimit = wormhole.maxIndividualMass;
-
-  let estimatedConsumed = trackedConsumed;
-  if (assessmentAnswer === 'reduced')  estimatedConsumed = Math.max(trackedConsumed, Math.round(target * 0.5));
-  if (assessmentAnswer === 'critical') estimatedConsumed = Math.max(trackedConsumed, Math.round(target * 0.9));
 
   const eligible = fleet
     .filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit)
@@ -621,7 +658,23 @@ export function recalculatePlan(wormhole, fleet, goal, trackedConsumed, assessme
     });
 
   const doorstopShip = goal === 'doorstop' ? eligible[0] : null;
-  const { items } = _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, []);
+
+  // ── Critical state: use getCritStrategy with actual hole/home composition ──
+  if (confirmedState === 'critical') {
+    const eligibleHole = holeSide.filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit);
+    const eligibleHome = homeSide.filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit);
+    return getCritStrategy(eligibleHole, eligibleHome, currentTotal, wormhole, goal, doorstopShip);
+  }
+
+  // ── Reduced: conservative estimate — only 60% of remaining mass usable ────
+  let effectiveWormhole = wormhole;
+  if (confirmedState === 'reduced') {
+    const remaining = target - currentTotal;
+    effectiveWormhole = { ...wormhole, totalMass: currentTotal + Math.round(remaining * 0.6) };
+  }
+
+  // ── Fresh / unknown: plan normally from currentTotal ──────────────────────
+  const { items } = _buildPlan(eligible, currentTotal, effectiveWormhole, goal, doorstopShip, []);
   return items;
 }
 
@@ -671,11 +724,36 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
   const goalCfg       = GOALS[goal] ?? GOALS.close;
   const goalThreshold = Math.round(target * goalCfg.threshold);
 
-  const allItems = [];
+  const allItems   = [];
   let runningTotal = estimatedConsumed;
+
+  // Track ship IDs that received step items across ALL passes.
+  // Used at the end to emit standing-by entries for ships never needed.
+  const _usedShipIds = new Set();
+
+  function _registerSteps(items) {
+    for (const i of items) if (i.type === 'step') _usedShipIds.add(i.ship.id);
+  }
+
+  // Emit standing-by entries for eligible ships that never got a step or
+  // standing-by anywhere in the plan.  Call just before each successful return.
+  function _finalStandingBy() {
+    const covered = new Set(
+      allItems.filter(i => i.type === 'step' || i.type === 'standing-by').map(i => i.ship.id)
+    );
+    for (const ship of eligible) {
+      if (!covered.has(ship.id) && ship.id !== doorstopShip?.id) {
+        allItems.push({
+          type: 'standing-by', id: uid(), ship,
+          reason: 'not needed — goal reached without this ship',
+        });
+      }
+    }
+  }
 
   // ── Already at goal ──────────────────────────────────────────────────────
   if (runningTotal >= goalThreshold) {
+    _finalStandingBy();
     if (goal === 'doorstop') allItems.push({ type: 'doorstop-marker', id: uid(), ship: doorstopShip });
     allItems.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
     return { items: allItems, canReachGoal: true };
@@ -687,11 +765,17 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
     passNumber++;
 
     // ── Crit state: ≥90% consumed on a close goal → cold in / hot back ───────
-    // Once we're in the final 10%, normal greedy passes risk stranding.
-    // Switch to getCritStrategy which sends one ship at a time: cold in, hot back.
     if (goal === 'close' && runningTotal >= Math.round(target * 0.9)) {
       const critItems = getCritStrategy([], eligible, runningTotal, wormhole, goal, doorstopShip);
+      _registerSteps(critItems);
       allItems.push(...critItems);
+      // Standing-by for any eligible ship not used by crit strategy
+      const critUsed = new Set(critItems.filter(i => i.type === 'step').map(i => i.ship.id));
+      for (const ship of eligible) {
+        if (!critUsed.has(ship.id) && ship.id !== doorstopShip?.id) {
+          allItems.push({ type: 'standing-by', id: uid(), ship, reason: 'not needed — goal reached without this ship' });
+        }
+      }
       const canReach = critItems.some(i => i.type === 'outcome');
       if (!canReach && warnings) {
         warnings.push({
@@ -703,7 +787,6 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
     }
 
     // ── SWITCHOVER TEST ──────────────────────────────────────────────────────
-    // Re-evaluated every pass against the full eligible fleet.
     let passFleet  = eligible;
     let sittingOut = [];
 
@@ -713,16 +796,22 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
       passFleet  = subsetResult.subset;
       sittingOut = subsetResult.sittingOut;
 
-      // Emit hold-back notice before this pass's steps
+      // Hold-back group notice + individual standing-by per sitting-out ship
       if (sittingOut.length > 0) {
         allItems.push({
           type: 'hold-back', id: uid(), passNumber,
           sittingOut, reason: subsetResult.reason,
         });
+        for (const ship of sittingOut) {
+          allItems.push({
+            type: 'standing-by', id: uid(), ship,
+            reason: 'held back this pass — full-fleet round trip would exceed mass budget',
+          });
+        }
       }
     }
 
-    if (passFleet.length === 0) break; // safety guard — shouldn't occur
+    if (passFleet.length === 0) break;
 
     // ── Try to finish in this pass ───────────────────────────────────────────
     const finalResult = _tryFinalPass(
@@ -731,18 +820,35 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
     );
 
     if (finalResult.canReachGoal) {
+      _registerSteps(finalResult.items);
       allItems.push(...finalResult.items);
+      // Standing-by for passFleet ships not used by final pass (e.g. aborted, or crit/doorstop precision)
+      const finalUsed = new Set(finalResult.items.filter(i => i.type === 'step').map(i => i.ship.id));
+      for (const ship of passFleet) {
+        if (!finalUsed.has(ship.id) && ship.id !== doorstopShip?.id) {
+          allItems.push({ type: 'standing-by', id: uid(), ship, reason: 'not needed this pass — goal reached by earlier ships' });
+        }
+      }
+      _finalStandingBy();
       if (goal === 'doorstop') allItems.push({ type: 'doorstop-marker', id: uid(), ship: doorstopShip });
       allItems.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
       return { items: allItems, canReachGoal: true };
     }
 
-    // ── Intermediate pass with the safety-approved fleet ─────────────────────
+    // ── Intermediate pass ────────────────────────────────────────────────────
     const intResult = _intermediatePass(passFleet, runningTotal, wormhole, goal);
+    _registerSteps(intResult.items);
     allItems.push(...intResult.items);
 
+    // Standing-by for passFleet ships that were aborted mid-pass
+    const intUsed = new Set(intResult.items.filter(i => i.type === 'step').map(i => i.ship.id));
+    for (const ship of passFleet) {
+      if (!intUsed.has(ship.id) && ship.id !== doorstopShip?.id) {
+        allItems.push({ type: 'standing-by', id: uid(), ship, reason: 'held back this pass — return simulation blocked entry' });
+      }
+    }
+
     if (!intResult.ok) {
-      // Check: did the WH collapse cleanly during returns? (valid for close goal)
       const lastItem = intResult.items[intResult.items.length - 1];
       if (
         goal === 'close' &&
@@ -750,6 +856,7 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
         lastItem?.direction === 'home' &&
         !lastItem?.isStrandingRisk
       ) {
+        _finalStandingBy();
         allItems.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
         return { items: allItems, canReachGoal: true };
       }
@@ -762,8 +869,8 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
       break;
     }
 
-    // Check: did the intermediate pass itself achieve the goal threshold?
     if (intResult.newRunning >= goalThreshold) {
+      _finalStandingBy();
       if (goal === 'doorstop') allItems.push({ type: 'doorstop-marker', id: uid(), ship: doorstopShip });
       allItems.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
       return { items: allItems, canReachGoal: true };
