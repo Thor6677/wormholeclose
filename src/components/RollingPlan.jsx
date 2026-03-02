@@ -151,6 +151,27 @@ function DoorstopMarkerRow({ item }) {
   );
 }
 
+function StandingByRow({ item }) {
+  return (
+    <div className="flex items-center gap-3 px-4 py-3 bg-slate-900/40 border-y border-slate-700/30">
+      <span className="text-slate-600 text-xs font-mono w-5 text-center shrink-0">—</span>
+      <span className="text-slate-600 text-base shrink-0">⏳</span>
+      <div className="flex-1 min-w-0">
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-slate-400 text-sm font-medium">{item.ship.pilotName}</span>
+          <span className="text-xs px-1.5 py-0.5 rounded bg-slate-700 text-slate-500 font-bold">STANDBY</span>
+        </div>
+        <div className="text-slate-600 text-xs mt-0.5">
+          {item.ship.shipClass}{item.ship.shipName ? ` — ${item.ship.shipName}` : ''}
+        </div>
+        {item.reason && (
+          <div className="text-slate-700 text-xs mt-0.5 italic">{item.reason}</div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function OutcomeRow({ item }) {
   const cfg = {
     collapsed:        { icon: '💥', label: 'WORMHOLE COLLAPSES', cls: 'text-emerald-400 bg-emerald-950/20 border-emerald-600/40' },
@@ -253,10 +274,11 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
                 const idx = stepIndex++;
                 return <StepRow key={item.id} step={item} index={idx} goal={goal} />;
               }
-              if (item.type === 'hold-back')       return <HoldBackRow       key={item.id} item={item} />;
-              if (item.type === 'assessment')     return <AssessmentRow     key={item.id} item={item} />;
-              if (item.type === 'doorstop-marker') return <DoorstopMarkerRow key={item.id} item={item} />;
-              if (item.type === 'outcome')         return <OutcomeRow        key={item.id} item={item} />;
+              if (item.type === 'hold-back')        return <HoldBackRow        key={item.id} item={item} />;
+              if (item.type === 'assessment')      return <AssessmentRow      key={item.id} item={item} />;
+              if (item.type === 'doorstop-marker') return <DoorstopMarkerRow  key={item.id} item={item} />;
+              if (item.type === 'outcome')         return <OutcomeRow         key={item.id} item={item} />;
+              if (item.type === 'standing-by')     return <StandingByRow      key={item.id} item={item} />;
               return null;
             })}
           </div>
