@@ -106,28 +106,27 @@ function _isHic(ship) {
 /**
  * Determine the jump mode (hot/cold) for a single jump.
  *
- * Defaults to HOT for every jump; falls back to COLD when a hot jump would
- * create stranding or collapse risk.  Uses a ±10% mass variance buffer for
- * safety margin on all risk checks.
+ * Defaults to HOT; falls back to COLD (or aborts) when a hot jump would
+ * create stranding risk, collapse risk, or uncertainty (grey zone).
  *
- * HIC ships are always physics-forced:
+ * Inbound: calls canSafelyEnter() to simulate worst-case returns for all
+ * pilots that would be in the hole.  If hot entry fails the simulation, tries
+ * cold entry.  If both fail, returns switchReason='abort'.
+ *
+ * Also applies grey-zone protection: if the nominal jump outcome falls in
+ * [target×0.9, target×1.1), the WH may or may not close — switch to cold
+ * when other pilots are at risk.
+ *
+ * HIC ships are physics-forced:
  *   direction='in'   → cold (Mass Entanglers, near-zero mass)
  *   direction='home' → hot  (MWD, 300M)
  *
- * @param {object} ship
- * @param {'in'|'home'} direction
- * @param {number} runningTotal   mass consumed so far (before this jump)
- * @param {object} wormhole       { totalMass, maxIndividualMass }
- * @param {Array}  pilotsInHole   ships currently in hole, excluding self
- * @param {string} goal           'close' | 'crit' | 'doorstop'
- * @returns {{ mode: 'hot'|'cold', mass: number, reason: string,
- *             switched: boolean, switchReason: string|null,
- *             showVariance: boolean, warning?: string }}
+ * switchReason values: 'strand-risk' | 'collapse-risk' | 'abort' | null
  */
 export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsInHole, goal) {
-  const target   = wormhole.totalMass;
+  const target    = wormhole.totalMass;
   const jumpLimit = wormhole.maxIndividualMass;
-  const stranded = pilotsInHole.length;
+  const stranded  = pilotsInHole.length;
 
   // ── HIC: physics-forced mode ─────────────────────────────────────────────
   if (_isHic(ship)) {
@@ -145,38 +144,56 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
     };
   }
 
-  // ── Non-HIC: default HOT, fall back to COLD on risk ─────────────────────
   const canHot   = ship.hotMass <= jumpLimit;
-  const hotMass  = canHot ? ship.hotMass : ship.coldMass; // effective "hot" mass
+  const hotMass  = canHot ? ship.hotMass : ship.coldMass;
   const coldMass = ship.coldMass;
-
-  // Worst-case hot mass with ±10% buffer for risk checks
   const hotWorst = Math.round(hotMass * 1.1);
   const afterHot = runningTotal + hotMass;
 
-  const hotWouldCollapse = runningTotal + hotWorst >= target;
-
+  // ── Inbound ───────────────────────────────────────────────────────────────
   if (direction === 'in') {
-    if (hotWouldCollapse) {
-      if (stranded > 0) {
-        // Hot entry could collapse with pilots already in hole → strand risk
+    // Full return-sequence simulation for all pilots that would be inside
+    const hotSafety = canSafelyEnter(ship, canHot ? 'hot' : 'cold', runningTotal, pilotsInHole, wormhole);
+
+    if (!hotSafety.safe) {
+      // Hot (or effective hot) entry fails — try cold
+      const coldSafety = canSafelyEnter(ship, 'cold', runningTotal, pilotsInHole, wormhole);
+      if (!coldSafety.safe) {
+        // Both modes unsafe — abort
         return {
           mode: 'cold', mass: coldMass,
-          reason: `hot entry worst-case (~${formatMass(hotWorst)} ±10%) could strand ${stranded} pilot${stranded > 1 ? 's' : ''}`,
-          switched: canHot, switchReason: 'strand-risk', showVariance: true,
-          warning: `Switched to cold — a hot jump here could collapse the hole and strand ${stranded} pilot${stranded > 1 ? 's' : ''} inside.`,
+          reason: `cannot enter safely — ${coldSafety.reason}`,
+          switched: false, switchReason: 'abort', showVariance: true,
+          warning: `🚨 Do not send ${ship.pilotName} — entering would risk stranding pilots inside. ${coldSafety.reason}.`,
         };
       }
-      if (goal !== 'close') {
-        // Don't collapse on entry for crit/doorstop
-        return {
-          mode: 'cold', mass: coldMass,
-          reason: 'hot entry would collapse hole — goal is ' + goal,
-          switched: canHot, switchReason: 'collapse-risk', showVariance: true,
-        };
-      }
+      return {
+        mode: 'cold', mass: coldMass,
+        reason: hotSafety.reason,
+        switched: canHot, switchReason: 'strand-risk', showVariance: true,
+        warning: `Switched to cold — ${hotSafety.reason}.`,
+      };
     }
-    // Safe to jump hot (or forced cold by jump limit)
+
+    // Simulation passed. Check goal constraint (crit/doorstop must not collapse on entry).
+    if (runningTotal + hotWorst >= target && goal !== 'close') {
+      return {
+        mode: 'cold', mass: coldMass,
+        reason: 'hot entry would collapse hole — goal is ' + goal,
+        switched: canHot, switchReason: 'collapse-risk', showVariance: true,
+      };
+    }
+
+    // Grey zone: hot entry outcome uncertain with pilots already inside
+    if (stranded > 0 && isInGreyZone(runningTotal, hotMass, target)) {
+      return {
+        mode: 'cold', mass: coldMass,
+        reason: `hot entry in grey zone (±10% WH variance) — cold safer with ${stranded} pilot${stranded > 1 ? 's' : ''} inside`,
+        switched: canHot, switchReason: 'strand-risk', showVariance: true,
+        warning: `⚠ UNCERTAIN — hot entry may collapse (±10% variance). Switched to cold to protect ${stranded} pilot${stranded > 1 ? 's' : ''} inside.`,
+      };
+    }
+
     return {
       mode: canHot ? 'hot' : 'cold',
       mass: hotMass,
@@ -187,10 +204,21 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
     };
   }
 
-  // direction === 'home'
+  // ── Outbound (home) ───────────────────────────────────────────────────────
+  const hotWouldCollapse = runningTotal + hotWorst >= target;
+
+  // Grey zone: hot return outcome uncertain with pilots still inside
+  if (stranded > 0 && isInGreyZone(runningTotal, hotMass, target)) {
+    return {
+      mode: 'cold', mass: coldMass,
+      reason: `hot return in grey zone (±10% WH variance) — could strand ${stranded} pilot${stranded > 1 ? 's' : ''}`,
+      switched: canHot, switchReason: 'strand-risk', showVariance: true,
+      warning: `⚠ UNCERTAIN — hot return may collapse (±10% variance). ${stranded} pilot${stranded > 1 ? 's' : ''} still inside. Switched to cold.`,
+    };
+  }
+
   if (hotWouldCollapse) {
     if (stranded > 0) {
-      // Hot return would collapse with other pilots still in hole → strand risk
       return {
         mode: 'cold', mass: coldMass,
         reason: `hot return worst-case (~${formatMass(hotWorst)} ±10%) would strand ${stranded} pilot${stranded > 1 ? 's' : ''}`,
@@ -199,7 +227,6 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
       };
     }
     if (goal !== 'close') {
-      // Don't want to collapse for crit/doorstop
       return {
         mode: 'cold', mass: coldMass,
         reason: 'hot return would collapse hole — goal is ' + goal,
@@ -208,7 +235,6 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
     }
   }
 
-  // Safe to jump hot (or forced cold by jump limit)
   return {
     mode: canHot ? 'hot' : 'cold',
     mass: hotMass,
@@ -293,6 +319,211 @@ export function findLargestSafeSubset(fleet, runningTotal, wormhole) {
     sittingOut: byContrib.slice(0, byContrib.length - 1),
     reason:     `Only 1 ship can safely go — full-fleet cold round trip exceeds mass budget.`,
   };
+}
+
+// ─── Per-jump safety utilities ────────────────────────────────────────────────
+
+/**
+ * True if the nominal outcome of a jump (runningTotal + jumpMass) falls in the
+ * uncertain grey zone: ≥ target×0.9 (might collapse on pessimistic WH mass)
+ * but < target×1.1 (might not collapse on optimistic WH mass).
+ *
+ * Use this to prefer cold alternatives and to label steps "UNCERTAIN".
+ */
+export function isInGreyZone(runningTotal, jumpMass, wormholeMaxMass) {
+  const afterJump      = runningTotal + jumpMass;
+  const pessimisticMax = Math.round(wormholeMaxMass * 0.9);
+  const optimisticMax  = Math.round(wormholeMaxMass * 1.1);
+  return afterJump >= pessimisticMax && afterJump < optimisticMax;
+}
+
+/**
+ * Test whether a ship can safely enter the hole without risking stranding anyone.
+ *
+ * Simulates:
+ *   1. This ship's entry at worst-case mass (entryMass × 1.1).
+ *   2. Every pilot in the hole returning, in order, at worst-case hot mass (× 1.1).
+ *      This ship is appended last (it entered last).
+ *
+ * A step is unsafe if its worst-case total reaches the WH cap while other
+ * pilots are still inside.  The LAST pilot's return may collapse the hole
+ * safely (there is nobody left to strand).
+ *
+ * @param {object}  ship
+ * @param {'hot'|'cold'} mode  — intended entry mode
+ * @param {number}  runningTotal  — mass consumed before entry
+ * @param {Array}   pilotsInHole  — ships already inside (BEFORE this ship enters)
+ * @param {object}  wormhole      — { totalMass, maxIndividualMass }
+ * @returns {{ safe: boolean, reason: string }}
+ */
+export function canSafelyEnter(ship, mode, runningTotal, pilotsInHole, wormhole) {
+  const target    = wormhole.totalMass;
+  const jumpLimit = wormhole.maxIndividualMass;
+
+  // ── Entry simulation ──────────────────────────────────────────────────────
+  const entryMass  = mode === 'hot'
+    ? (ship.hotMass <= jumpLimit ? ship.hotMass : ship.coldMass)
+    : ship.coldMass;
+  const entryWorst = Math.round(entryMass * 1.1);
+
+  // Entry collapses with others already inside → strand risk
+  if (runningTotal + entryWorst >= target && pilotsInHole.length > 0) {
+    return {
+      safe:   false,
+      reason: `${mode} entry worst-case (~${formatMass(entryWorst)}) collapses hole with ` +
+              `${pilotsInHole.length} pilot${pilotsInHole.length > 1 ? 's' : ''} still inside`,
+    };
+  }
+
+  // ── Return simulation — all pilots who would be in hole after entry ───────
+  // Order: pilots already inside return first (same order as plan), this ship last.
+  const allInHole  = [...pilotsInHole, ship];
+  let   simTotal   = runningTotal + entryWorst;
+
+  for (let i = 0; i < allInHole.length; i++) {
+    const returning     = allInHole[i];
+    const stillInHole   = allInHole.slice(i + 1);
+
+    // Worst-case return mass: hot where possible, cold only if oversized
+    const baseReturn  = _isHic(returning)
+      ? returning.hotMass
+      : (returning.hotMass <= jumpLimit ? returning.hotMass : returning.coldMass);
+    const returnWorst = Math.round(baseReturn * 1.1);
+
+    simTotal += returnWorst;
+
+    // Collapse with pilots still inside → strand risk
+    if (simTotal >= target && stillInHole.length > 0) {
+      return {
+        safe:   false,
+        reason: `${returning.pilotName}'s worst-case return (~${formatMass(returnWorst)}) ` +
+                `collapses hole with ${stillInHole.length} pilot${stillInHole.length > 1 ? 's' : ''} still inside`,
+      };
+    }
+  }
+
+  return { safe: true, reason: 'all pilots can safely return after entry' };
+}
+
+/**
+ * Build the safest closing sequence when the wormhole is at critical mass
+ * (≥90% consumed, close goal).
+ *
+ * Strategy: cold in → hot back (controlled collapse).
+ *   Cold entry minimises mass on the way in, preserving the variance buffer.
+ *   Hot return is the controlled collapse jump.
+ *
+ * If pilots are already in the hole at crit declaration, handle their
+ * returns first (cold if safe, else flag strand risk).
+ *
+ * @param {Array}       pilotsInHole  — ships already inside ([] during plan-time)
+ * @param {Array}       pilotsAtHome  — available ships at home
+ * @param {number}      runningTotal
+ * @param {object}      wormhole
+ * @param {string}      goal
+ * @param {object|null} doorstopShip
+ * @returns {Array}  plan items (steps + optional outcome)
+ */
+export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormhole, goal, doorstopShip) {
+  const items   = [];
+  const target  = wormhole.totalMass;
+  const goalCfg = GOALS[goal] ?? GOALS.close;
+  const goalThreshold = Math.round(target * goalCfg.threshold);
+  let running     = runningTotal;
+  let goalReached = false;
+
+  // ── Handle pilots already in the hole ────────────────────────────────────
+  for (let i = 0; i < pilotsInHole.length; i++) {
+    const ship      = pilotsInHole[i];
+    const stillIn   = pilotsInHole.slice(i + 1);
+    const coldWorst = Math.round(ship.coldMass * 1.1);
+    const strandRisk = running + coldWorst >= target && stillIn.length > 0;
+
+    if (strandRisk) {
+      // Cannot return safely — surface strand warning and stop planning
+      items.push({
+        type: 'step', id: `home-${ship.id}-${uid()}`,
+        ship, direction: 'home', isHot: false, massThisJump: ship.coldMass,
+        runningTotal: running + ship.coldMass,
+        collapses: running + ship.coldMass >= target,
+        isGoalStep: false, isStrandingRisk: true, isHic: _isHic(ship),
+        reason: '⚠ STRAND RISK — cold return worst-case may collapse with pilots still inside',
+        switched: false, switchReason: 'strand-risk', showVariance: true,
+        warning: `⚠ STRAND RISK: ${ship.pilotName} is in the hole and the wormhole may collapse ` +
+                 `before they can return. Recommend cold return immediately before any other jumps.`,
+      });
+      return items; // FC must act; no further plan possible
+    }
+
+    running += ship.coldMass;
+    const isGoalStep = !goalReached && running >= goalThreshold;
+    if (isGoalStep) goalReached = true;
+
+    items.push({
+      type: 'step', id: `home-${ship.id}-${uid()}`,
+      ship, direction: 'home', isHot: false, massThisJump: ship.coldMass,
+      runningTotal: running, collapses: running >= target,
+      isGoalStep, isStrandingRisk: false, isHic: _isHic(ship),
+      reason: 'cold return — crit state, preserving variance buffer',
+      switched: false, switchReason: null, showVariance: true,
+    });
+
+    if (running >= target) {
+      if (goalReached) items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
+      return items;
+    }
+  }
+
+  // ── Cold in / hot back for ships at home ──────────────────────────────────
+  for (const ship of pilotsAtHome) {
+    if (running >= target) break;
+
+    // Cold entry — minimal mass into hole
+    running += ship.coldMass;
+    items.push({
+      type: 'step', id: `in-${ship.id}-${uid()}`,
+      ship, direction: 'in', isHot: false, massThisJump: ship.coldMass,
+      runningTotal: running, collapses: running >= target,
+      isGoalStep: false, isStrandingRisk: false, isHic: _isHic(ship),
+      reason: 'cold in — crit state, minimise entry mass before controlled close',
+      switched: true, switchReason: 'collapse-risk', showVariance: true,
+    });
+
+    if (running >= target) {
+      const isGoalStep = !goalReached && running >= goalThreshold;
+      if (isGoalStep) { goalReached = true; items[items.length - 1].isGoalStep = true; }
+      if (goalReached) items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
+      return items;
+    }
+
+    // Hot back — controlled collapse
+    const jumpLimit  = wormhole.maxIndividualMass;
+    const returnMass = _isHic(ship) ? ship.hotMass
+      : (ship.hotMass <= jumpLimit ? ship.hotMass : ship.coldMass);
+    const isHot      = !_isHic(ship) && ship.hotMass <= jumpLimit;
+    running         += returnMass;
+    const collapses  = running >= target;
+    const isGoalStep = !goalReached && running >= goalThreshold;
+    if (isGoalStep) goalReached = true;
+
+    items.push({
+      type: 'step', id: `home-${ship.id}-${uid()}`,
+      ship, direction: 'home', isHot,
+      massThisJump: returnMass, runningTotal: running,
+      collapses, isGoalStep, isStrandingRisk: false, isHic: _isHic(ship),
+      reason: collapses
+        ? 'HOT ← home — controlled collapse at critical mass'
+        : 'hot return — crit closing pass',
+      switched: false, switchReason: null, showVariance: true,
+    });
+
+    if (collapses) {
+      if (goalReached) items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
+      return items;
+    }
+  }
+
+  return items;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -455,6 +686,22 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
   while (runningTotal < goalThreshold && passNumber < 10) {
     passNumber++;
 
+    // ── Crit state: ≥90% consumed on a close goal → cold in / hot back ───────
+    // Once we're in the final 10%, normal greedy passes risk stranding.
+    // Switch to getCritStrategy which sends one ship at a time: cold in, hot back.
+    if (goal === 'close' && runningTotal >= Math.round(target * 0.9)) {
+      const critItems = getCritStrategy([], eligible, runningTotal, wormhole, goal, doorstopShip);
+      allItems.push(...critItems);
+      const canReach = critItems.some(i => i.type === 'outcome');
+      if (!canReach && warnings) {
+        warnings.push({
+          id: uid(), type: 'insufficient',
+          message: 'Cannot safely close at critical mass — fleet may not have enough mass for a cold in / hot back sequence.',
+        });
+      }
+      return { items: allItems, canReachGoal: canReach };
+    }
+
     // ── SWITCHOVER TEST ──────────────────────────────────────────────────────
     // Re-evaluated every pass against the full eligible fleet.
     let passFleet  = eligible;
@@ -582,7 +829,11 @@ function _singlePassGreedy(ships, startRunning, target, goalThreshold, jumpLimit
   const inHole = [];
 
   for (const ship of ships) {
-    const jr       = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
+    const jr = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
+
+    // canSafelyEnter determined no mode is safe — stop sending ships in
+    if (jr.switchReason === 'abort') break;
+
     const mass     = jr.mass;
     const isHot    = jr.mode === 'hot';
     running       += mass;
@@ -660,7 +911,11 @@ function _intermediatePass(eligible, startRunning, wormhole, goal) {
 
   // Inbound
   for (const ship of eligible) {
-    const jr      = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
+    const jr = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
+
+    // canSafelyEnter determined no mode is safe — stop sending ships in
+    if (jr.switchReason === 'abort') break;
+
     const mass    = jr.mass;
     const isHot   = jr.mode === 'hot';
     running      += mass;
