@@ -510,8 +510,19 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
   }
 
   // ── Cold in / hot back for ships at home (close goal only) ───────────────
+  // Track the first (heaviest) ship whose cold entry would collapse the hole.
+  // Used for the diagnostic step if the loop exhausts without a safe close.
+  let firstColdEntryBlocked = null;
+
   for (const ship of pilotsAtHome) {
     if (running >= target) break;
+
+    // Pre-check: would cold entry collapse the hole with the pilot inside?
+    // Skip this ship and try lighter ships / a HIC instead.
+    if (running + ship.coldMass >= target) {
+      if (!firstColdEntryBlocked) firstColdEntryBlocked = ship;
+      continue;
+    }
 
     // Cold entry — minimal mass into hole
     running += ship.coldMass;
@@ -556,6 +567,28 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
       if (goalReached) items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
       return items;
     }
+  }
+
+  // If no ship safely completed a collapse and at least one ship was blocked
+  // by cold-entry mass, emit a diagnostic strand-risk step.  This tells the FC
+  // which ship cannot safely enter and prompts them to add a HIC.
+  if (firstColdEntryBlocked) {
+    const ship = firstColdEntryBlocked;
+    items.push({
+      type: 'step', id: `in-${ship.id}-${uid()}`,
+      ship, direction: 'in', isHot: false, massThisJump: ship.coldMass,
+      runningTotal: running + ship.coldMass,
+      collapses: true, isGoalStep: false, isStrandingRisk: true, isHic: _isHic(ship),
+      reason: `cold entry (${formatMass(ship.coldMass)}) would collapse hole — pilot would be stranded inside`,
+      switched: true, switchReason: 'strand-risk', showVariance: true,
+      warning:
+        `⚠ ${ship.pilotName} (${ship.shipClass}) cannot safely close: cold entry ` +
+        `(${formatMass(ship.coldMass)}) would collapse this wormhole ` +
+        `(${formatMass(running)} + ${formatMass(ship.coldMass)} = ` +
+        `${formatMass(running + ship.coldMass)} ≥ ${formatMass(target)}). ` +
+        `Add a HIC with Mass Entanglers — it enters near-zero mass and returns ` +
+        `300M hot for a safe controlled close.`,
+    });
   }
 
   return items;
@@ -812,9 +845,24 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
       }
       const canReach = critItems.some(i => i.type === 'outcome');
       if (!canReach && warnings) {
+        const entryBlocked = critItems.find(
+          i => i.type === 'step' && i.isStrandingRisk && i.direction === 'in',
+        );
+        const allTooHeavy = eligible.length > 0 &&
+          eligible.every(s => runningTotal + s.coldMass >= target);
         warnings.push({
           id: uid(), type: 'insufficient',
-          message: 'Cannot safely close at critical mass — fleet may not have enough mass for a cold in / hot back sequence.',
+          message: entryBlocked
+            ? `Cannot safely close at critical mass — ${entryBlocked.ship.shipClass} cold entry ` +
+              `(${formatMass(entryBlocked.ship.coldMass)}) would collapse the wormhole. ` +
+              `Add a HIC with Mass Entanglers: it enters near-zero mass and returns 300M hot ` +
+              `for a controlled close.`
+            : allTooHeavy
+              ? `Cannot safely close at critical mass — all ships are too heavy for cold entry. ` +
+                `Add a HIC with Mass Entanglers for the controlled close.`
+              : `Cannot safely close at critical mass — fleet may not have enough mass ` +
+                `for a cold in / hot back sequence. ` +
+                `Consider adding a HIC with Mass Entanglers.`,
         });
       }
       return { items: allItems, canReachGoal: canReach };
@@ -1129,9 +1177,12 @@ export function validatePlan(plan, wormhole) {
   // ── Check 1: Stranding ──────────────────────────────────────────────────
   stepItems.forEach((step, idx) => {
     if (step.isStrandingRisk) {
+      const entryStrand = step.direction === 'in';
       warnings.push(
         `⚠ STRANDING RISK: Step ${idx + 1} — ${step.ship.pilotName} (${step.ship.shipClass}) — ` +
-        `this jump collapses the wormhole with other pilots still inside.`
+        (entryStrand
+          ? `cold entry would collapse the wormhole, leaving this pilot stranded inside.`
+          : `this jump collapses the wormhole with other pilots still inside.`)
       );
     }
   });
@@ -1201,9 +1252,18 @@ export function validatePlan(plan, wormhole) {
 
   // ── Recommendation ──────────────────────────────────────────────────────
   let recommendation = null;
-  const hasStranding = warnings.some(w => w.includes('STRANDING'));
+  const entryStrandStep = stepItems.find(s => s.isStrandingRisk && s.direction === 'in');
+  const hasStranding    = warnings.some(w => w.includes('STRANDING'));
 
-  if (hasStranding) {
+  if (entryStrandStep) {
+    // All standard ships are too heavy to cold-enter at this mass level.
+    // The only safe tool is a HIC with Mass Entanglers.
+    recommendation =
+      `Add a HIC with Mass Entanglers as the final ship:\n` +
+      `it enters near-zero mass (Mass Entanglers active) and returns 300M hot for a\n` +
+      `controlled collapse — the only safe option when all standard ships are too\n` +
+      `heavy to cold-enter without collapsing the wormhole.`;
+  } else if (hasStranding) {
     const strandStep = stepItems.find(s => s.isStrandingRisk);
     const pilotName  = strandStep?.ship.pilotName ?? 'a pilot';
     const shipClass  = strandStep?.ship.shipClass ?? 'ship';
