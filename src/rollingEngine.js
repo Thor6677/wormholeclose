@@ -188,6 +188,21 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
       };
     }
 
+    // For crit/doorstop: even if hot entry itself is safe, the mandatory cold return
+    // that follows might still collapse the hole (e.g. running+hot reaches goal threshold,
+    // then running+hot+cold >= target).  Switch to cold entry so cold-in + cold-back
+    // stays safely below the collapse point.
+    if (goal !== 'close' && canHot) {
+      const coldReturnWorst = Math.round(coldMass * 1.1);
+      if (runningTotal + hotMass + coldReturnWorst >= target) {
+        return {
+          mode: 'cold', mass: coldMass,
+          reason: `cold in — hot entry + cold return would collapse (goal: ${goal})`,
+          switched: true, switchReason: 'collapse-risk', showVariance: true,
+        };
+      }
+    }
+
     // Grey zone: hot entry outcome uncertain with pilots already inside
     if (stranded > 0 && isInGreyZone(runningTotal, hotMass, target)) {
       return {
@@ -437,9 +452,13 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
   let goalReached = false;
 
   // ── Handle pilots already in the hole ────────────────────────────────────
-  for (let i = 0; i < pilotsInHole.length; i++) {
-    const ship      = pilotsInHole[i];
-    const stillIn   = pilotsInHole.slice(i + 1);
+  // For doorstop: the staged ship stays inside — exclude it from the return sequence.
+  const returningFromHole = pilotsInHole.filter(
+    s => !(goal === 'doorstop' && doorstopShip && s.id === doorstopShip.id)
+  );
+  for (let i = 0; i < returningFromHole.length; i++) {
+    const ship      = returningFromHole[i];
+    const stillIn   = returningFromHole.slice(i + 1);
     const coldWorst = Math.round(ship.coldMass * 1.1);
     const strandRisk = running + coldWorst >= target && stillIn.length > 0;
 
@@ -478,7 +497,19 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
     }
   }
 
-  // ── Cold in / hot back for ships at home ──────────────────────────────────
+  // ── For crit/doorstop: goal already reached at critical state ────────────
+  // Don't send any more ships in — just confirm the outcome and, for doorstop,
+  // mark the staged ship.
+  if (goal !== 'close') {
+    if (goal === 'doorstop' && doorstopShip) {
+      items.push({ type: 'doorstop-marker', id: uid(), ship: doorstopShip });
+    }
+    if (!goalReached) goalReached = running >= goalThreshold;
+    if (goalReached) items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
+    return items;
+  }
+
+  // ── Cold in / hot back for ships at home (close goal only) ───────────────
   for (const ship of pilotsAtHome) {
     if (running >= target) break;
 
@@ -624,7 +655,7 @@ export function generatePlan(wormhole, fleet, goal = 'close') {
  *   'fresh'    → plan normally from currentTotal
  *   'unknown'  → plan normally from currentTotal
  *   'reduced'  → conservative: effectiveTotal = currentTotal + remaining × 0.6
- *   'critical' → getCritStrategy(holeSide, homeSide, ...) — cold in / hot back
+ *   'critical' → getCritStrategy: return in-hole pilots; for close, also cold-in/hot-back collapse
  *
  * @param {Array}   completedSteps  All items completed so far (used for side tracking)
  * @param {number}  currentTotal    Mass consumed so far
@@ -663,7 +694,10 @@ export function recalculatePlan(
   if (confirmedState === 'critical') {
     const eligibleHole = holeSide.filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit);
     const eligibleHome = homeSide.filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit);
-    return getCritStrategy(eligibleHole, eligibleHome, currentTotal, wormhole, goal, doorstopShip);
+    // For crit/doorstop the goal is already reached — return in-hole pilots home (keeping
+    // the doorstop ship staged) but do NOT send any home-side ships back in.
+    // Only close needs the cold-in / hot-back collapse sequence.
+    return getCritStrategy(eligibleHole, goal === 'close' ? eligibleHome : [], currentTotal, wormhole, goal, doorstopShip);
   }
 
   // ── Reduced: conservative estimate — only 60% of remaining mass usable ────
