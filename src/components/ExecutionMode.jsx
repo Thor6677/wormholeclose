@@ -129,7 +129,7 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
     const completedItems = activeItems.slice(0, currentIdx);
     const { homeSide, holeSide } = computeSides(completedItems, fleet);
     const session = { consumedFloor, reductionObserved, reductionAtMass, holeSide, homeSide };
-    const { updatedSession, newSteps } = respondToStatus(status, session, fleet, wormhole, goal);
+    const { updatedSession, newSteps } = respondToStatus(status, session, fleet, wormhole, goal, doorstopShip);
     setReductionObserved(updatedSession.reductionObserved);
     setReductionAtMass(updatedSession.reductionAtMass);
     // Replace assessment item and everything after it with new steps
