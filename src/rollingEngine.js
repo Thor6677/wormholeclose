@@ -667,22 +667,35 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal, o
   const jumpLimit = wormhole.maxIndividualMass;
 
   const updatedSession = { ...currentSession };
+  let updatedTotalMass = null;
 
-  // ── Critical: evacuate hole, then close ──────────────────────────────────
+  // ── Critical: worst-case totalMass, evacuate hole, then close ────────────
   if (status === 'critical') {
-    const newSteps = buildCritClosingSequence(holeSide, homeSide, consumedFloor, wormhole, goal, originalDoorstopShip);
-    return { updatedSession, newSteps };
+    // Worst case: the hole went critical at exactly 90% consumed, meaning
+    // the true totalMass is consumedFloor / 0.9 (the minimum it could be).
+    const worstCaseTotal = Math.round(consumedFloor / 0.9);
+    updatedTotalMass = Math.min(wormhole.totalMass, worstCaseTotal);
+    const effectiveWH = { ...wormhole, totalMass: updatedTotalMass };
+    const newSteps = buildCritClosingSequence(holeSide, homeSide, consumedFloor, effectiveWH, goal, originalDoorstopShip);
+    return { updatedSession, newSteps, updatedTotalMass };
   }
 
-  // ── Reduced: record when first observed ──────────────────────────────────
+  // ── Reduced: worst-case totalMass, record when first observed ────────────
   if (status === 'reduced' && !reductionObserved) {
     updatedSession.reductionObserved = true;
     updatedSession.reductionAtMass   = consumedFloor;
+    // Worst case: the hole went reduced at exactly 50% consumed, meaning
+    // the true totalMass is consumedFloor / 0.5 (the minimum it could be).
+    const worstCaseTotal = Math.round(consumedFloor / 0.5);
+    updatedTotalMass = Math.min(wormhole.totalMass, worstCaseTotal);
   }
 
   // ── Compute effective wormhole using pessimistic mass estimate ────────────
-  let effectiveWormhole = wormhole;
-  if (updatedSession.reductionObserved) {
+  let effectiveWormhole = updatedTotalMass != null
+    ? { ...wormhole, totalMass: updatedTotalMass }
+    : wormhole;
+
+  if (updatedSession.reductionObserved && updatedTotalMass == null) {
     const { pessimistic } = estimateRemainingMass(
       wormhole, consumedFloor,
       updatedSession.reductionObserved, updatedSession.reductionAtMass,
@@ -702,7 +715,7 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal, o
 
   const doorstopShip = goal === 'doorstop' ? eligible[0] : null;
   const { items }    = _buildPlan(eligible, consumedFloor, effectiveWormhole, goal, doorstopShip, []);
-  return { updatedSession, newSteps: items };
+  return { updatedSession, newSteps: items, updatedTotalMass };
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
