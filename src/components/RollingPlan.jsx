@@ -1,4 +1,4 @@
-import { formatMass, GOALS, validatePlan } from '../rollingEngine.js';
+import { formatMass, GOALS, INITIAL_MASS_STATES, validatePlan } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
 
 // Per-goal badge styling (full Tailwind strings required — no dynamic interpolation)
@@ -188,6 +188,85 @@ function OutcomeRow({ item }) {
   );
 }
 
+const STATE_TRANSITION_CFG = {
+  reduced: {
+    icon: '🟡',
+    label: 'Wormhole Expected Reduced',
+    description: 'Visually smaller — approx. 50% mass consumed',
+    cls: 'bg-amber-950/20 border-amber-500/30 text-amber-300',
+    descCls: 'text-amber-400/60',
+  },
+  critical: {
+    icon: '🔴',
+    label: 'Wormhole Expected Critical',
+    description: 'Flashing — approx. 90% mass consumed',
+    cls: 'bg-red-950/20 border-red-500/30 text-red-300',
+    descCls: 'text-red-400/60',
+  },
+};
+
+function StateTransitionRow({ transition }) {
+  const cfg = STATE_TRANSITION_CFG[transition];
+  if (!cfg) return null;
+  return (
+    <div className={`flex items-center gap-3 px-4 py-2.5 border-y ${cfg.cls}`}>
+      <span className="text-xs font-mono w-5 text-center shrink-0">—</span>
+      <span className="text-base shrink-0">{cfg.icon}</span>
+      <div className="flex-1 min-w-0">
+        <div className={`text-sm font-semibold ${cfg.cls.split(' ').pop()}`}>{cfg.label}</div>
+        <div className={`text-xs mt-0.5 ${cfg.descCls}`}>
+          {cfg.description} · actual timing may vary ±10%
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Compute where mass state transitions occur in the plan.
+ * Returns a Map of item.id → transition name ('reduced'|'critical') to show BEFORE that item.
+ *
+ * Thresholds:
+ *   Fresh → Reduced:  runningTotal crosses 50% of totalMass
+ *   Reduced → Critical: runningTotal crosses 90% of totalMass
+ *
+ * Accounts for initialMassState — if already reduced, skip the reduced marker.
+ */
+function computeStateTransitions(items, totalMass, initialMassState) {
+  const markers = new Map();
+  const reducedThreshold  = Math.round(totalMass * 0.5);
+  const criticalThreshold = Math.round(totalMass * 0.9);
+
+  let needsReduced  = initialMassState === 'fresh';
+  let needsCritical = initialMassState !== 'critical';
+
+  // Track previous step's runningTotal
+  let prevRunning = 0;
+  // Find the first step to get the starting runningTotal (before any jumps)
+  for (const item of items) {
+    if (item.type === 'step') {
+      prevRunning = item.runningTotal - item.massThisJump;
+      break;
+    }
+  }
+
+  for (const item of items) {
+    if (item.type !== 'step') continue;
+
+    if (needsReduced && prevRunning < reducedThreshold && item.runningTotal >= reducedThreshold) {
+      markers.set(item.id, 'reduced');
+      needsReduced = false;
+    } else if (needsCritical && prevRunning < criticalThreshold && item.runningTotal >= criticalThreshold) {
+      markers.set(item.id, 'critical');
+      needsCritical = false;
+    }
+
+    prevRunning = item.runningTotal;
+  }
+
+  return markers;
+}
+
 export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) {
   const goal    = plan.goal ?? 'close';
   const goalCfg = GOALS[goal] ?? GOALS.close;
@@ -207,6 +286,9 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
   const validation = validatePlan(plan, wormhole);
   const planIsBlocked = !validation.valid;
 
+  const initialMassState = plan.initialMassState ?? 'fresh';
+  const stateTransitions = computeStateTransitions(annotated, wormhole.totalMass, initialMassState);
+
   let stepIndex = 0;
 
   return (
@@ -218,6 +300,11 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
           <h2 className="text-lg font-bold text-cyan-400">Rolling Plan — {wormhole.type}</h2>
           <p className="text-slate-500 text-xs">
             {fleet.length} ship{fleet.length !== 1 ? 's' : ''} · {stepItems.length} jump{stepItems.length !== 1 ? 's' : ''} · {goalCfg.label}
+            {initialMassState !== 'fresh' && (
+              <span className={initialMassState === 'critical' ? 'text-red-400 ml-1' : 'text-amber-400 ml-1'}>
+                · Starting {INITIAL_MASS_STATES[initialMassState].label}
+              </span>
+            )}
           </p>
         </div>
       </div>
@@ -254,6 +341,11 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
               ⚠ Insufficient fleet mass — add more ships to {goalCfg.label.toLowerCase()} this wormhole.
             </div>
           )}
+          {stateTransitions.size > 0 && (
+            <div className="mt-2 text-slate-600 text-xs leading-relaxed">
+              State markers below show where the wormhole is expected to change visually. These are approximations — actual mass is never known exactly (±10% variance on each jump).
+            </div>
+          )}
         </div>
 
         {/* Item list */}
@@ -270,16 +362,26 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
 
           <div className="divide-y divide-slate-700/40">
             {annotated.map(item => {
+              const transition = stateTransitions.get(item.id);
+              const rows = [];
+              if (transition) {
+                rows.push(<StateTransitionRow key={`trans-${item.id}`} transition={transition} />);
+              }
               if (item.type === 'step') {
                 const idx = stepIndex++;
-                return <StepRow key={item.id} step={item} index={idx} goal={goal} />;
+                rows.push(<StepRow key={item.id} step={item} index={idx} goal={goal} />);
+              } else if (item.type === 'hold-back') {
+                rows.push(<HoldBackRow        key={item.id} item={item} />);
+              } else if (item.type === 'assessment') {
+                rows.push(<AssessmentRow      key={item.id} item={item} />);
+              } else if (item.type === 'doorstop-marker') {
+                rows.push(<DoorstopMarkerRow  key={item.id} item={item} />);
+              } else if (item.type === 'outcome') {
+                rows.push(<OutcomeRow         key={item.id} item={item} />);
+              } else if (item.type === 'standing-by') {
+                rows.push(<StandingByRow      key={item.id} item={item} />);
               }
-              if (item.type === 'hold-back')        return <HoldBackRow        key={item.id} item={item} />;
-              if (item.type === 'assessment')      return <AssessmentRow      key={item.id} item={item} />;
-              if (item.type === 'doorstop-marker') return <DoorstopMarkerRow  key={item.id} item={item} />;
-              if (item.type === 'outcome')         return <OutcomeRow         key={item.id} item={item} />;
-              if (item.type === 'standing-by')     return <StandingByRow      key={item.id} item={item} />;
-              return null;
+              return rows;
             })}
           </div>
         </div>

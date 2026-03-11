@@ -6,12 +6,13 @@ import RollingPlan from './components/RollingPlan.jsx';
 import ExecutionMode from './components/ExecutionMode.jsx';
 
 export default function App() {
-  const [screen, setScreen]           = useState('wormhole-select');
-  const [wormhole, setWormhole]       = useState(null);
-  const [fleet, setFleet]             = useState([]);
-  const [goal, setGoal]               = useState('close');
-  const [plan, setPlan]               = useState(null);
-  const [activeItems, setActiveItems] = useState([]);
+  const [screen, setScreen]                     = useState('wormhole-select');
+  const [wormhole, setWormhole]                 = useState(null);
+  const [fleet, setFleet]                       = useState([]);
+  const [goal, setGoal]                         = useState('close');
+  const [initialMassState, setInitialMassState] = useState('fresh');
+  const [plan, setPlan]                         = useState(null);
+  const [activeItems, setActiveItems]           = useState([]);
 
   function handleWormholeSelect(wh) {
     setWormhole(wh);
@@ -21,7 +22,7 @@ export default function App() {
   }
 
   function handleGeneratePlan() {
-    setPlan(generatePlan(wormhole, fleet, goal));
+    setPlan(generatePlan(wormhole, fleet, goal, initialMassState));
     setScreen('rolling-plan');
   }
 
@@ -36,6 +37,7 @@ export default function App() {
     setPlan(null);
     setActiveItems([]);
     setGoal('close');
+    setInitialMassState('fresh');
     setScreen('wormhole-select');
   }
 
@@ -51,6 +53,8 @@ export default function App() {
         setFleet={setFleet}
         goal={goal}
         onGoalChange={setGoal}
+        initialMassState={initialMassState}
+        onMassStateChange={setInitialMassState}
         onGenerate={handleGeneratePlan}
         onBack={() => setScreen('wormhole-select')}
       />
@@ -77,6 +81,7 @@ export default function App() {
         initialItems={activeItems}
         goal={plan?.goal ?? 'close'}
         doorstopShip={plan?.doorstopShip ?? null}
+        initialMassState={plan?.initialMassState ?? 'fresh'}
         onReset={handleReset}
       />
     );

@@ -89,14 +89,19 @@ function DoneScreen({ wormhole, result, onReset, doorstopShip, onCloseNow }) {
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'close', doorstopShip, onReset }) {
+export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'close', doorstopShip, initialMassState = 'fresh', onReset }) {
   const [items,             setItems]             = useState(initialItems);
   const [currentIdx,        setCurrentIdx]        = useState(0);
   const [showTracker,       setShowTracker]       = useState(false);
   const [closingStep,       setClosingStep]       = useState(null);
-  // Reduction tracking — set when FC confirms "Wormhole Reduced" at pass end
-  const [reductionObserved, setReductionObserved] = useState(false);
-  const [reductionAtMass,   setReductionAtMass]   = useState(0);
+  // Reduction tracking — set when FC confirms "Wormhole Reduced" at pass end or per-jump
+  const [reductionObserved, setReductionObserved] = useState(initialMassState === 'reduced' || initialMassState === 'critical');
+  const [reductionAtMass,   setReductionAtMass]   = useState(
+    initialMassState === 'reduced'  ? Math.round(wormhole.totalMass * 0.5) :
+    initialMassState === 'critical' ? Math.round(wormhole.totalMass * 0.9) : 0
+  );
+  // Per-jump mass status gate — when true, show mass status prompt after completing a step
+  const [pendingMassCheck,  setPendingMassCheck]   = useState(false);
 
   // Resolve current item (may have been replaced by a closing step)
   const activeItems = useMemo(
@@ -135,6 +140,38 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
     // Replace assessment item and everything after it with new steps
     setItems([...activeItems.slice(0, currentIdx), ...newSteps]);
     setCurrentIdx(currentIdx);
+  }
+
+  // ── Per-jump mass status handler ────────────────────────────────────────────
+  function handleJumpDone() {
+    // Show mass status check after completing a step
+    setPendingMassCheck(true);
+  }
+
+  function handleJumpMassStatus(status) {
+    setPendingMassCheck(false);
+    if (status === 'no_change') {
+      // Just advance to next step
+      setCurrentIdx(i => i + 1);
+      return;
+    }
+    // Mass state changed — replan from current position
+    const nextIdx = currentIdx + 1;
+    const completedItems = activeItems.slice(0, nextIdx);
+    const { homeSide, holeSide } = computeSides(completedItems, fleet);
+    // consumedFloor at this point includes the step we just completed
+    let floor = 0;
+    for (let i = 0; i < nextIdx; i++) {
+      const it = activeItems[i];
+      if (it?.type === 'step') floor += Math.round(it.massThisJump * 1.1);
+    }
+    const session = { consumedFloor: floor, reductionObserved, reductionAtMass, holeSide, homeSide };
+    const { updatedSession, newSteps } = respondToStatus(status, session, fleet, wormhole, goal, doorstopShip);
+    setReductionObserved(updatedSession.reductionObserved);
+    setReductionAtMass(updatedSession.reductionAtMass);
+    // Replace everything after current step with new steps
+    setItems([...completedItems, ...newSteps]);
+    setCurrentIdx(nextIdx);
   }
 
   // ── Doorstop close-now handler ──────────────────────────────────────────────
@@ -191,6 +228,68 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
         onCloseNow={handleCloseNow}
         onReset={onReset}
       />
+    );
+  }
+
+  // ── Per-jump mass status gate ───────────────────────────────────────────────
+  if (pendingMassCheck) {
+    const justCompleted = activeItems[currentIdx];
+    return (
+      <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
+        {/* Top bar */}
+        <div className="bg-slate-900 border-b border-slate-800 px-4 py-3 flex items-center justify-between shrink-0">
+          <span className="text-slate-500 font-mono text-sm">{wormhole.type}</span>
+          <button
+            onClick={() => { setPendingMassCheck(false); }}
+            className="text-xs px-3 py-1.5 rounded-lg border border-slate-700 text-slate-500 hover:text-slate-300"
+          >
+            ← Back
+          </button>
+        </div>
+
+        <div className="flex-1 flex flex-col px-4 py-4 gap-3">
+          <div>
+            <MassProgressBar current={massConsumedSoFar + (justCompleted?.massThisJump ?? 0)} total={wormhole.totalMass} />
+            <div className="flex justify-between text-xs text-slate-600 mt-1 font-mono">
+              <span>{formatMass(massConsumedSoFar + (justCompleted?.massThisJump ?? 0))}</span>
+              <span>{formatMass(wormhole.totalMass)}</span>
+            </div>
+          </div>
+
+          <div className="flex-1 flex flex-col items-center justify-center gap-5 py-4">
+            <div className="text-center">
+              <div className="text-3xl mb-2">🕳</div>
+              <h2 className="text-xl font-bold text-slate-100 mb-1">Wormhole status?</h2>
+              <p className="text-slate-500 text-sm">
+                {justCompleted?.ship?.pilotName} just jumped — check the hole
+              </p>
+            </div>
+            <div className="w-full flex flex-col gap-2.5 max-w-xs">
+              <button
+                onClick={() => handleJumpMassStatus('no_change')}
+                className="w-full py-4 rounded-2xl font-bold text-slate-100 text-base bg-slate-700 hover:bg-slate-600 active:bg-slate-800 transition-colors"
+              >
+                No Change
+                <div className="text-xs text-slate-400 font-normal mt-0.5">Looks the same</div>
+              </button>
+              <button
+                onClick={() => handleJumpMassStatus('reduced')}
+                className="w-full py-4 rounded-2xl font-bold text-slate-900 text-base bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors"
+              >
+                Reduced
+                <div className="text-xs text-amber-800 font-normal mt-0.5">Visually smaller — ~50% consumed</div>
+              </button>
+              <button
+                onClick={() => handleJumpMassStatus('critical')}
+                className="w-full py-4 rounded-2xl font-bold text-white text-base bg-red-600 hover:bg-red-500 active:bg-red-700 transition-colors"
+              >
+                Critical
+                <div className="text-xs text-red-200 font-normal mt-0.5">Flashing — ~90% consumed</div>
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
     );
   }
 
@@ -571,7 +670,7 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
             ← Undo
           </button>
           <button
-            onClick={() => setCurrentIdx(i => i + 1)}
+            onClick={handleJumpDone}
             className={`py-5 rounded-xl font-semibold text-base text-slate-900 ${doneColor} transition-colors`}
           >
             Done ✓

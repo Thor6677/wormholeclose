@@ -708,16 +708,36 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal, o
 // ─── Public API ──────────────────────────────────────────────────────────────
 
 /**
+ * Initial mass state options for when the wormhole is already partially consumed.
+ *
+ *   'fresh'    — Default. Full mass budget available.
+ *   'reduced'  — Wormhole is visually reduced (~50% consumed). Plan uses
+ *                conservative estimate: only 50% of stated mass remains.
+ *   'critical' — Wormhole is already flashing (~90% consumed). Plan jumps
+ *                straight to critical closing strategy.
+ */
+export const INITIAL_MASS_STATES = {
+  fresh:    { label: 'Fresh',    description: 'Full mass — wormhole just spawned or looks normal' },
+  reduced:  { label: 'Reduced',  description: 'Visually smaller — ~50% mass already consumed' },
+  critical: { label: 'Critical', description: 'Flashing — ~90% mass consumed, one jump from death' },
+};
+
+/**
  * Build the full rolling plan.
  *
- * Returns { items, warnings, canReachGoal, goal, doorstopShip }
+ * Returns { items, warnings, canReachGoal, goal, doorstopShip, initialMassState }
  *
  * The plan is a flat array of typed items (step / assessment / doorstop-marker
  * / outcome).  Assessment items are inserted between passes; the FC answers
  * them during execution and the tail of the plan is regenerated via
  * recalculatePlan().
+ *
+ * @param {object} wormhole
+ * @param {Array}  fleet
+ * @param {string} goal
+ * @param {'fresh'|'reduced'|'critical'} initialMassState  Starting mass state
  */
-export function generatePlan(wormhole, fleet, goal = 'close') {
+export function generatePlan(wormhole, fleet, goal = 'close', initialMassState = 'fresh') {
   if (!wormhole || !fleet || fleet.length === 0) return null;
 
   const jumpLimit = wormhole.maxIndividualMass;
@@ -775,7 +795,41 @@ export function generatePlan(wormhole, fleet, goal = 'close') {
     });
   }
 
-  const { items, canReachGoal } = _buildPlan(eligible, 0, wormhole, goal, doorstopShip, warnings);
+  // ── Apply initial mass state ────────────────────────────────────────────
+  let estimatedConsumed = 0;
+  let effectiveWormhole = wormhole;
+  let items, canReachGoal;
+
+  if (initialMassState === 'critical') {
+    // Already at ~90% consumed — jump straight to crit strategy
+    estimatedConsumed = Math.round(wormhole.totalMass * 0.9);
+    const critItems = getCritStrategy([], eligible, estimatedConsumed, wormhole, goal, doorstopShip);
+    items = critItems;
+    canReachGoal = critItems.some(i => i.type === 'outcome');
+
+    // Standing-by for ships not used by crit strategy
+    const critUsed = new Set(critItems.filter(i => i.type === 'step').map(i => i.ship.id));
+    for (const ship of eligible) {
+      if (!critUsed.has(ship.id) && ship.id !== doorstopShip?.id) {
+        items.push({ type: 'standing-by', id: uid(), ship, reason: 'not needed — goal reached without this ship' });
+      }
+    }
+
+    if (!canReachGoal) {
+      warnings.push({
+        id: uid(), type: 'insufficient',
+        message: 'Cannot safely close at critical mass — fleet may not have enough mass for a cold in / hot back sequence.',
+      });
+    }
+  } else {
+    if (initialMassState === 'reduced') {
+      // ~50% consumed → use conservative effective total (only 50% of stated mass remains)
+      estimatedConsumed = Math.round(wormhole.totalMass * 0.5);
+      effectiveWormhole = { ...wormhole, totalMass: wormhole.totalMass };
+    }
+
+    ({ items, canReachGoal } = _buildPlan(eligible, estimatedConsumed, effectiveWormhole, goal, doorstopShip, warnings));
+  }
 
   // Assertion: every eligible ship must appear as a step or standing-by entry.
   const coveredIds = new Set(
@@ -789,7 +843,7 @@ export function generatePlan(wormhole, fleet, goal = 'close') {
     );
   }
 
-  return { items, warnings, canReachGoal, goal, doorstopShip };
+  return { items, warnings, canReachGoal, goal, doorstopShip, initialMassState };
 }
 
 /**

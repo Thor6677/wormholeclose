@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { SHIP_CLASSES, GOALS, formatMass } from '../rollingEngine.js';
+import { SHIP_CLASSES, GOALS, INITIAL_MASS_STATES, formatMass } from '../rollingEngine.js';
 
 const CLASS_LIST = Object.keys(SHIP_CLASSES);
 let _shipId = 1;
@@ -15,7 +15,7 @@ function blankForm(cls = 'Battleship') {
   };
 }
 
-export default function FleetSetup({ wormhole, fleet, setFleet, goal, onGoalChange, onGenerate, onBack }) {
+export default function FleetSetup({ wormhole, fleet, setFleet, goal, onGoalChange, initialMassState, onMassStateChange, onGenerate, onBack }) {
   const [form,   setForm]   = useState(blankForm());
   const [editId, setEditId] = useState(null);
   const [error,  setError]  = useState('');
@@ -271,6 +271,43 @@ export default function FleetSetup({ wormhole, fleet, setFleet, goal, onGoalChan
             ))}
           </div>
           <p className="text-xs text-slate-500">{GOALS[goal].description}</p>
+        </div>
+
+        {/* Initial mass state */}
+        <div className="bg-slate-800 rounded-2xl border border-slate-700 p-4">
+          <h3 className="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3">
+            Current Wormhole State
+          </h3>
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            {Object.entries(INITIAL_MASS_STATES).map(([key, config]) => (
+              <button
+                key={key}
+                onClick={() => onMassStateChange(key)}
+                className={`py-2.5 px-2 rounded-xl text-sm font-semibold transition-colors text-center ${
+                  initialMassState === key
+                    ? key === 'critical'
+                      ? 'bg-red-500 text-white'
+                      : key === 'reduced'
+                        ? 'bg-amber-500 text-slate-900'
+                        : 'bg-cyan-500 text-slate-900'
+                    : 'bg-slate-900 border border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500'
+                }`}
+              >
+                {config.label}
+              </button>
+            ))}
+          </div>
+          <p className="text-xs text-slate-500">{INITIAL_MASS_STATES[initialMassState].description}</p>
+          {initialMassState === 'reduced' && (
+            <div className="mt-2 bg-amber-950/30 border border-amber-500/30 rounded-xl p-2.5 text-xs text-amber-300">
+              Plan will assume ~50% mass already consumed. Assessment checkpoints will confirm actual state.
+            </div>
+          )}
+          {initialMassState === 'critical' && (
+            <div className="mt-2 bg-red-950/30 border border-red-500/30 rounded-xl p-2.5 text-xs text-red-300">
+              Plan will use critical closing strategy — cold in, hot back for controlled collapse.
+            </div>
+          )}
         </div>
 
         {/* Generate */}
