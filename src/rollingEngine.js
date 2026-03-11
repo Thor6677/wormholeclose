@@ -192,9 +192,11 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
     // that follows might still collapse the hole (e.g. running+hot reaches goal threshold,
     // then running+hot+cold >= target).  Switch to cold entry so cold-in + cold-back
     // stays safely below the collapse point.
+    // Use worst-case (×1.1) for BOTH legs — the wormhole applies ±10% variance to
+    // the entry mass too, so nominal hotMass underestimates the collapse risk.
     if (goal !== 'close' && canHot) {
       const coldReturnWorst = Math.round(coldMass * 1.1);
-      if (runningTotal + hotMass + coldReturnWorst >= target) {
+      if (runningTotal + hotWorst + coldReturnWorst >= target) {
         return {
           mode: 'cold', mass: coldMass,
           reason: `cold in — hot entry + cold return would collapse (goal: ${goal})`,
@@ -620,7 +622,7 @@ export function estimateRemainingMass(wormhole, consumedFloor, reductionObserved
  * @param {string} goal
  * @returns {Array} Plan items (steps + optional outcome)
  */
-export function buildCritClosingSequence(holeSide, homeSide, runningTotal, wormhole, goal) {
+export function buildCritClosingSequence(holeSide, homeSide, runningTotal, wormhole, goal, originalDoorstopShip = null) {
   const jumpLimit = wormhole.maxIndividualMass;
 
   // Return hole pilots lightest-cold-first to preserve mass for later returns
@@ -634,7 +636,17 @@ export function buildCritClosingSequence(holeSide, homeSide, runningTotal, wormh
   const nonHics = eligibleHome.filter(s => !_isHic(s)).sort((a, b) => a.coldMass - b.coldMass);
   const closingOrder = [...hics, ...nonHics];
 
-  const doorstopShip = goal === 'doorstop' ? (closingOrder[0] ?? null) : null;
+  // Use the original doorstop ship if it's still eligible (in hole or at home).
+  // Only fall back to picking a new one if the original is unavailable.
+  let doorstopShip = null;
+  if (goal === 'doorstop') {
+    const allEligible = [...eligibleHole, ...closingOrder];
+    const originalStillEligible = originalDoorstopShip &&
+      allEligible.some(s => s.id === originalDoorstopShip.id);
+    doorstopShip = originalStillEligible
+      ? originalDoorstopShip
+      : (allEligible.sort((a, b) => b.hotMass - a.hotMass)[0] ?? null);
+  }
   return getCritStrategy(eligibleHole, closingOrder, runningTotal, wormhole, goal, doorstopShip);
 }
 
@@ -650,7 +662,7 @@ export function buildCritClosingSequence(holeSide, homeSide, runningTotal, wormh
  * @param {string} goal
  * @returns {{ updatedSession: object, newSteps: Array }}
  */
-export function respondToStatus(status, currentSession, fleet, wormhole, goal) {
+export function respondToStatus(status, currentSession, fleet, wormhole, goal, originalDoorstopShip = null) {
   const { consumedFloor, reductionObserved, reductionAtMass, holeSide, homeSide } = currentSession;
   const jumpLimit = wormhole.maxIndividualMass;
 
@@ -658,7 +670,7 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal) {
 
   // ── Critical: evacuate hole, then close ──────────────────────────────────
   if (status === 'critical') {
-    const newSteps = buildCritClosingSequence(holeSide, homeSide, consumedFloor, wormhole, goal);
+    const newSteps = buildCritClosingSequence(holeSide, homeSide, consumedFloor, wormhole, goal, originalDoorstopShip);
     return { updatedSession, newSteps };
   }
 
@@ -808,6 +820,7 @@ export function recalculatePlan(
   fleet,
   wormhole,
   goal,
+  originalDoorstopShip = null,
 ) {
   const target    = wormhole.totalMass;
   const jumpLimit = wormhole.maxIndividualMass;
@@ -820,7 +833,12 @@ export function recalculatePlan(
       return b.hotMass - a.hotMass;
     });
 
-  const doorstopShip = goal === 'doorstop' ? eligible[0] : null;
+  // Preserve the original doorstop ship if still eligible; fall back to heaviest.
+  const doorstopShip = goal === 'doorstop'
+    ? (originalDoorstopShip && eligible.some(s => s.id === originalDoorstopShip.id)
+        ? originalDoorstopShip
+        : eligible[0] ?? null)
+    : null;
 
   // ── Critical state: use getCritStrategy with actual hole/home composition ──
   if (confirmedState === 'critical') {
@@ -1132,13 +1150,19 @@ function _singlePassGreedy(ships, startRunning, target, goalThreshold, jumpLimit
 
   // ── Phase 2: Returns ────────────────────────────────────────────────────
   // Doorstop ship stays in hole — exclude from returns.
-  const returningShips = (goal === 'doorstop' && doorstopShip)
+  const doorstopStaysInHole = goal === 'doorstop' && doorstopShip && inHole.some(s => s.id === doorstopShip.id);
+  const returningShips = doorstopStaysInHole
     ? inHole.filter(s => s.id !== doorstopShip.id)
     : inHole;
 
   for (let i = 0; i < returningShips.length; i++) {
     const ship              = returningShips[i];
-    const pilotsStillInHole = returningShips.slice(i + 1);
+    // Include doorstop ship in pilotsStillInHole — it IS still inside the hole
+    // and would be stranded if the wormhole collapses during this return.
+    const remainingReturns  = returningShips.slice(i + 1);
+    const pilotsStillInHole = doorstopStaysInHole
+      ? [...remainingReturns, doorstopShip]
+      : remainingReturns;
     const jr       = selectJumpMode(ship, 'home', running, wormhole, pilotsStillInHole, goal);
     const mass     = jr.mass;
     const isHot    = jr.mode === 'hot';
