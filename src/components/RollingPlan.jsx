@@ -1,5 +1,6 @@
 import { formatMass, GOALS, INITIAL_MASS_STATES, validatePlan } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
+import FeedbackForm from './FeedbackForm.jsx';
 
 // Per-goal badge styling (full Tailwind strings required — no dynamic interpolation)
 const GOAL_BADGE = {
@@ -408,6 +409,9 @@ export default function RollingPlan({ wormhole, plan, fleet, onStart, onBack }) 
             )}
           </div>
         )}
+
+        {/* Optional feedback — shown before starting the roll */}
+        <FeedbackForm context="rolling-plan" wormholeType={wormhole.type} />
 
         {/* Start button — hidden (not just disabled) when plan is unsafe */}
         {planIsBlocked || !canReachGoal ? (
