@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { formatMass, GOALS, respondToStatus, estimateRemainingMass, generateClosingStep } from '../rollingEngine.js';
 import MassProgressBar from './MassProgressBar.jsx';
 import SideTracker from './SideTracker.jsx';
+import FeedbackForm from './FeedbackForm.jsx';
 
 // ─── Goal-specific config ────────────────────────────────────────────────────
 
@@ -66,7 +67,7 @@ function DoneScreen({ wormhole, result, onReset, doorstopShip, onCloseNow }) {
         {cfg.heading}
       </h1>
       <p className="text-slate-400 text-lg mb-2">{cfg.sub(wormhole)}</p>
-      <p className="text-slate-600 text-sm mb-10">{cfg.note}</p>
+      <p className="text-slate-600 text-sm mb-8">{cfg.note}</p>
 
       {result === 'doorstop_active' && doorstopShip && (
         <button
@@ -79,10 +80,15 @@ function DoneScreen({ wormhole, result, onReset, doorstopShip, onCloseNow }) {
 
       <button
         onClick={onReset}
-        className="px-10 py-4 rounded-xl font-semibold bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 text-slate-900 text-lg transition-colors"
+        className="px-10 py-4 rounded-xl font-semibold bg-cyan-400 hover:bg-cyan-300 active:bg-cyan-500 text-slate-900 text-lg transition-colors mb-8"
       >
         Roll Another Wormhole
       </button>
+
+      {/* Optional post-execution feedback */}
+      <div className="w-full max-w-sm">
+        <FeedbackForm context="post-execution" wormholeType={wormhole.type} />
+      </div>
     </div>
   );
 }
