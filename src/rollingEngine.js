@@ -135,10 +135,34 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
   // ── HIC: physics-forced mode ─────────────────────────────────────────────
   if (_isHic(ship)) {
     if (direction === 'in') {
+      // HIC enters cold (Mass Entanglers), but still check if all pilots
+      // (including this HIC's mandatory 300M hot return) can safely get home.
+      // canSafelyEnter simulates worst-case returns for everyone inside.
+      const safety = canSafelyEnter(ship, 'cold', runningTotal, pilotsInHole, wormhole);
+      if (!safety.safe) {
+        return {
+          mode: 'cold', mass: ship.coldMass,
+          reason: `cannot enter safely — ${safety.reason}`,
+          switched: false, switchReason: 'abort', showVariance: true,
+          warning: `🚨 Do not send ${ship.pilotName} — HIC's mandatory 300M hot return would risk stranding pilots inside. ${safety.reason}.`,
+        };
+      }
       return {
         mode: 'cold', mass: ship.coldMass,
         reason: 'Mass Entanglers active — near zero mass into hole',
         switched: false, switchReason: null, showVariance: false,
+      };
+    }
+    // HIC return is physics-forced hot — cannot go cold.
+    // Warn if this hot return would collapse the hole with pilots still inside.
+    const hotWorst = Math.round(ship.hotMass * 1.1);
+    if (runningTotal + hotWorst >= target && stranded > 0) {
+      return {
+        mode: 'hot', mass: ship.hotMass,
+        reason: `⚠ MWD hot (forced) — may collapse with ${stranded} pilot${stranded > 1 ? 's' : ''} inside`,
+        switched: false, switchReason: null, showVariance: true,
+        warning: `⚠ ${ship.pilotName} (HIC) MUST return hot (${formatMass(ship.hotMass)}) — wormhole may collapse ` +
+                 `with ${stranded} pilot${stranded > 1 ? 's' : ''} still inside.`,
       };
     }
     return {
@@ -461,35 +485,43 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
   for (let i = 0; i < returningFromHole.length; i++) {
     const ship      = returningFromHole[i];
     const stillIn   = returningFromHole.slice(i + 1);
-    const coldWorst = Math.round(ship.coldMass * 1.1);
-    const strandRisk = running + coldWorst >= target && stillIn.length > 0;
+    // HICs always return hot (MWD, physics-forced) — use hotMass for mass tracking.
+    // Non-HICs return cold at crit to preserve the variance buffer.
+    const isHic       = _isHic(ship);
+    const returnMass  = isHic ? ship.hotMass : ship.coldMass;
+    const returnWorst = Math.round(returnMass * 1.1);
+    const strandRisk  = running + returnWorst >= target && stillIn.length > 0;
 
     if (strandRisk) {
       // Cannot return safely — surface strand warning and stop planning
       items.push({
         type: 'step', id: `home-${ship.id}-${uid()}`,
-        ship, direction: 'home', isHot: false, massThisJump: ship.coldMass,
-        runningTotal: running + ship.coldMass,
-        collapses: running + ship.coldMass >= target,
-        isGoalStep: false, isStrandingRisk: true, isHic: _isHic(ship),
-        reason: '⚠ STRAND RISK — cold return worst-case may collapse with pilots still inside',
+        ship, direction: 'home', isHot: isHic, massThisJump: returnMass,
+        runningTotal: running + returnMass,
+        collapses: running + returnMass >= target,
+        isGoalStep: false, isStrandingRisk: true, isHic,
+        reason: isHic
+          ? '⚠ STRAND RISK — HIC must return hot (MWD), worst-case may collapse with pilots still inside'
+          : '⚠ STRAND RISK — cold return worst-case may collapse with pilots still inside',
         switched: false, switchReason: 'strand-risk', showVariance: true,
         warning: `⚠ STRAND RISK: ${ship.pilotName} is in the hole and the wormhole may collapse ` +
-                 `before they can return. Recommend cold return immediately before any other jumps.`,
+                 `before they can return. Recommend ${isHic ? 'hot' : 'cold'} return immediately before any other jumps.`,
       });
       return items; // FC must act; no further plan possible
     }
 
-    running += ship.coldMass;
+    running += returnMass;
     const isGoalStep = !goalReached && running >= goalThreshold;
     if (isGoalStep) goalReached = true;
 
     items.push({
       type: 'step', id: `home-${ship.id}-${uid()}`,
-      ship, direction: 'home', isHot: false, massThisJump: ship.coldMass,
+      ship, direction: 'home', isHot: isHic, massThisJump: returnMass,
       runningTotal: running, collapses: running >= target,
-      isGoalStep, isStrandingRisk: false, isHic: _isHic(ship),
-      reason: 'cold return — crit state, preserving variance buffer',
+      isGoalStep, isStrandingRisk: false, isHic,
+      reason: isHic
+        ? 'MWD hot return — HIC physics-forced, crit state'
+        : 'cold return — crit state, preserving variance buffer',
       switched: false, switchReason: null, showVariance: true,
     });
 
@@ -606,6 +638,113 @@ export function estimateRemainingMass(wormhole, consumedFloor, reductionObserved
 }
 
 /**
+ * Build a position-aware plan when pilots may already be in the hole.
+ *
+ * Non-critical replan flow:
+ *   1. Return any in-hole pilots home safely (using selectJumpMode to
+ *      pick cold/hot appropriately for each return).
+ *   2. If the goal is already reached after those returns → done.
+ *   3. Otherwise delegate to _buildPlan() for further passes, starting
+ *      from the updated running total (all ships are now at home).
+ *
+ * This is used by respondToStatus() and recalculatePlan() for the
+ * non-critical path, where _buildPlan() was previously called with
+ * the full fleet regardless of current ship positions — producing
+ * "jump IN" steps for ships already inside the hole.
+ *
+ * @param {Array}       eligible      All eligible ships (sorted)
+ * @param {Array}       holeSide      Ships currently in the hole
+ * @param {number}      runningTotal  Mass consumed so far
+ * @param {object}      wormhole      { totalMass, maxIndividualMass }
+ * @param {string}      goal          'close' | 'crit' | 'doorstop'
+ * @param {object|null} doorstopShip
+ * @param {Array}       warnings      Mutable warnings array
+ * @returns {{ items: Array, canReachGoal: boolean }}
+ */
+function _buildPositionAwarePlan(eligible, holeSide, runningTotal, wormhole, goal, doorstopShip, warnings) {
+  const target      = wormhole.totalMass;
+  const jumpLimit   = wormhole.maxIndividualMass;
+  const goalCfg     = GOALS[goal] ?? GOALS.close;
+  const goalThreshold = Math.round(target * goalCfg.threshold);
+
+  const items   = [];
+  let running   = runningTotal;
+  let goalReached = running >= goalThreshold;
+
+  // ── Phase 0: Return in-hole pilots home ─────────────────────────────────
+  if (holeSide.length > 0) {
+    const eligibleHole = holeSide
+      .filter(s => _isHic(s) ? s.hotMass <= jumpLimit : s.coldMass <= jumpLimit);
+
+    // For doorstop: the staged ship stays inside — exclude from returns.
+    const returningFromHole = (goal === 'doorstop' && doorstopShip)
+      ? eligibleHole.filter(s => s.id !== doorstopShip.id)
+      : eligibleHole;
+
+    for (let i = 0; i < returningFromHole.length; i++) {
+      const ship     = returningFromHole[i];
+      const stillIn  = returningFromHole.slice(i + 1);
+      // Include doorstop ship in stranding checks — it IS still in the hole
+      const pilotsStillInHole = (goal === 'doorstop' && doorstopShip)
+        ? [...stillIn, doorstopShip]
+        : stillIn;
+
+      const jr = selectJumpMode(ship, 'home', running, wormhole, pilotsStillInHole, goal);
+      const mass    = jr.mass;
+      const isHot   = jr.mode === 'hot';
+      running      += mass;
+      const collapses  = running >= target;
+      const isGoalStep = !goalReached && running >= goalThreshold;
+      if (isGoalStep) goalReached = true;
+
+      items.push({
+        type: 'step', id: `home-${ship.id}-${uid()}`,
+        ship, direction: 'home', isHot, massThisJump: mass,
+        runningTotal: running, collapses, isGoalStep,
+        isStrandingRisk: collapses && pilotsStillInHole.length > 0,
+        isHic: _isHic(ship),
+        reason: jr.reason, switched: jr.switched ?? false,
+        warning: jr.warning, switchReason: jr.switchReason ?? null,
+        showVariance: jr.showVariance ?? false,
+      });
+
+      if (collapses) {
+        if (goalReached) items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
+        return { items, canReachGoal: goalReached };
+      }
+    }
+
+    // Goal reached from returns alone
+    if (goalReached) {
+      if (goal === 'doorstop' && doorstopShip) {
+        items.push({ type: 'doorstop-marker', id: uid(), ship: doorstopShip });
+      }
+      items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
+      return { items, canReachGoal: true };
+    }
+  }
+
+  // ── Phase 1: All ships home — continue with normal planning ─────────────
+  // If the doorstop ship is already in the hole (it was excluded from Phase 0
+  // returns), remove it from the eligible list so _buildPlan/singlePassGreedy
+  // won't generate a redundant "jump IN" step for it.  The doorstopShip param
+  // is still passed so _buildPlan emits the doorstop-marker and handles
+  // standing-by / stranding logic correctly.
+  const doorstopAlreadyInHole = goal === 'doorstop' && doorstopShip &&
+    holeSide.some(s => s.id === doorstopShip.id);
+  const planEligible = doorstopAlreadyInHole
+    ? eligible.filter(s => s.id !== doorstopShip.id)
+    : eligible;
+
+  const { items: planItems, canReachGoal } = _buildPlan(
+    planEligible, running, wormhole, goal, doorstopShip, warnings || [],
+  );
+  items.push(...planItems);
+
+  return { items, canReachGoal: canReachGoal || goalReached };
+}
+
+/**
  * Build the critical closing sequence from actual pilot positions.
  *
  * Return order for in-hole pilots: lightest cold mass first (preserves mass
@@ -702,8 +841,12 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal, o
       wormhole, consumedFloor,
       updatedSession.reductionObserved, updatedSession.reductionAtMass,
     );
-    // Effective total = what we've burned + pessimistic remaining
-    effectiveWormhole = { ...wormhole, totalMass: consumedFloor + pessimistic };
+    // Effective total = what we've burned + pessimistic remaining, but never
+    // exceed the stated max.  reductionAtMass is a pessimistic (×1.1) sum, so
+    // reductionAtMass / 0.5 can overshoot statedMax — capping prevents the
+    // planner from assuming more headroom than the hole actually has.
+    const effTotal = Math.min(wormhole.totalMass, consumedFloor + pessimistic);
+    effectiveWormhole = { ...wormhole, totalMass: effTotal };
   }
 
   // ── Replan from consumedFloor with effective wormhole ────────────────────
@@ -716,7 +859,13 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal, o
     });
 
   const doorstopShip = goal === 'doorstop' ? eligible[0] : null;
-  const { items }    = _buildPlan(eligible, consumedFloor, effectiveWormhole, goal, doorstopShip, []);
+
+  // Use position-aware planning: return in-hole pilots home first, then
+  // continue with normal passes.  This prevents generating "jump IN" steps
+  // for ships already inside the hole.
+  const { items } = _buildPositionAwarePlan(
+    eligible, holeSide, consumedFloor, effectiveWormhole, goal, doorstopShip, [],
+  );
   return { updatedSession, newSteps: items, updatedTotalMass };
 }
 
@@ -929,8 +1078,11 @@ export function recalculatePlan(
     effectiveWormhole = { ...wormhole, totalMass: currentTotal + Math.round(remaining * 0.6) };
   }
 
-  // ── Fresh / unknown: plan normally from currentTotal ──────────────────────
-  const { items } = _buildPlan(eligible, currentTotal, effectiveWormhole, goal, doorstopShip, []);
+  // ── Fresh / unknown: position-aware plan from currentTotal ────────────────
+  // Return in-hole pilots home first, then continue with normal passes.
+  const { items } = _buildPositionAwarePlan(
+    eligible, holeSide, currentTotal, effectiveWormhole, goal, doorstopShip, [],
+  );
   return items;
 }
 
