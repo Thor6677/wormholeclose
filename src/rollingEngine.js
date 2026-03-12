@@ -512,26 +512,28 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
   }
 
   // ── Cold in / hot back for ships at home (close goal only) ───────────────
-  for (const ship of pilotsAtHome) {
+  // Sort by coldMass ascending — lightest ship enters first to minimise
+  // the chance that the entry itself collapses the hole and strands the pilot.
+  const sortedHome = [...pilotsAtHome].sort((a, b) => a.coldMass - b.coldMass);
+
+  for (const ship of sortedHome) {
     if (running >= target) break;
+
+    // SAFETY: if this ship's worst-case cold entry would collapse the hole,
+    // the pilot would be stranded inside. Skip and try the next lighter ship.
+    const coldWorst = Math.round(ship.coldMass * 1.1);
+    if (running + coldWorst >= target) continue;
 
     // Cold entry — minimal mass into hole
     running += ship.coldMass;
     items.push({
       type: 'step', id: `in-${ship.id}-${uid()}`,
       ship, direction: 'in', isHot: false, massThisJump: ship.coldMass,
-      runningTotal: running, collapses: running >= target,
+      runningTotal: running, collapses: false,
       isGoalStep: false, isStrandingRisk: false, isHic: _isHic(ship),
       reason: 'cold in — crit state, minimise entry mass before controlled close',
       switched: true, switchReason: 'collapse-risk', showVariance: true,
     });
-
-    if (running >= target) {
-      const isGoalStep = !goalReached && running >= goalThreshold;
-      if (isGoalStep) { goalReached = true; items[items.length - 1].isGoalStep = true; }
-      if (goalReached) items.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
-      return items;
-    }
 
     // Hot back — controlled collapse
     const jumpLimit  = wormhole.maxIndividualMass;
@@ -667,22 +669,35 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal, o
   const jumpLimit = wormhole.maxIndividualMass;
 
   const updatedSession = { ...currentSession };
+  let updatedTotalMass = null;
 
-  // ── Critical: evacuate hole, then close ──────────────────────────────────
+  // ── Critical: worst-case totalMass, evacuate hole, then close ────────────
   if (status === 'critical') {
-    const newSteps = buildCritClosingSequence(holeSide, homeSide, consumedFloor, wormhole, goal, originalDoorstopShip);
-    return { updatedSession, newSteps };
+    // Worst case: the hole went critical at exactly 90% consumed, meaning
+    // the true totalMass is consumedFloor / 0.9 (the minimum it could be).
+    const worstCaseTotal = Math.round(consumedFloor / 0.9);
+    updatedTotalMass = Math.min(wormhole.totalMass, worstCaseTotal);
+    const effectiveWH = { ...wormhole, totalMass: updatedTotalMass };
+    const newSteps = buildCritClosingSequence(holeSide, homeSide, consumedFloor, effectiveWH, goal, originalDoorstopShip);
+    return { updatedSession, newSteps, updatedTotalMass };
   }
 
-  // ── Reduced: record when first observed ──────────────────────────────────
+  // ── Reduced: worst-case totalMass, record when first observed ────────────
   if (status === 'reduced' && !reductionObserved) {
     updatedSession.reductionObserved = true;
     updatedSession.reductionAtMass   = consumedFloor;
+    // Worst case: the hole went reduced at exactly 50% consumed, meaning
+    // the true totalMass is consumedFloor / 0.5 (the minimum it could be).
+    const worstCaseTotal = Math.round(consumedFloor / 0.5);
+    updatedTotalMass = Math.min(wormhole.totalMass, worstCaseTotal);
   }
 
   // ── Compute effective wormhole using pessimistic mass estimate ────────────
-  let effectiveWormhole = wormhole;
-  if (updatedSession.reductionObserved) {
+  let effectiveWormhole = updatedTotalMass != null
+    ? { ...wormhole, totalMass: updatedTotalMass }
+    : wormhole;
+
+  if (updatedSession.reductionObserved && updatedTotalMass == null) {
     const { pessimistic } = estimateRemainingMass(
       wormhole, consumedFloor,
       updatedSession.reductionObserved, updatedSession.reductionAtMass,
@@ -702,7 +717,7 @@ export function respondToStatus(status, currentSession, fleet, wormhole, goal, o
 
   const doorstopShip = goal === 'doorstop' ? eligible[0] : null;
   const { items }    = _buildPlan(eligible, consumedFloor, effectiveWormhole, goal, doorstopShip, []);
-  return { updatedSession, newSteps: items };
+  return { updatedSession, newSteps: items, updatedTotalMass };
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -811,14 +826,17 @@ export function generatePlan(wormhole, fleet, goal = 'close', initialMassState =
     const critUsed = new Set(critItems.filter(i => i.type === 'step').map(i => i.ship.id));
     for (const ship of eligible) {
       if (!critUsed.has(ship.id) && ship.id !== doorstopShip?.id) {
-        items.push({ type: 'standing-by', id: uid(), ship, reason: 'not needed — goal reached without this ship' });
+        const reason = canReachGoal
+          ? 'not needed — goal reached without this ship'
+          : 'too heavy — cold entry at critical mass would collapse the wormhole and strand the pilot';
+        items.push({ type: 'standing-by', id: uid(), ship, reason });
       }
     }
 
     if (!canReachGoal) {
       warnings.push({
         id: uid(), type: 'insufficient',
-        message: 'Cannot safely close at critical mass — fleet may not have enough mass for a cold in / hot back sequence.',
+        message: 'Cannot safely close at critical mass — all fleet ships are too heavy to enter without collapsing the hole. Add a lighter ship (Cruiser, Battlecruiser) or a HIC with Mass Entanglers.',
       });
     }
   } else {
@@ -1008,17 +1026,20 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
       _registerSteps(critItems);
       allItems.push(...critItems);
       // Standing-by for any eligible ship not used by crit strategy
+      const canReach = critItems.some(i => i.type === 'outcome');
       const critUsed = new Set(critItems.filter(i => i.type === 'step').map(i => i.ship.id));
       for (const ship of eligible) {
         if (!critUsed.has(ship.id) && ship.id !== doorstopShip?.id) {
-          allItems.push({ type: 'standing-by', id: uid(), ship, reason: 'not needed — goal reached without this ship' });
+          const reason = canReach
+            ? 'not needed — goal reached without this ship'
+            : 'too heavy — cold entry at critical mass would collapse the wormhole and strand the pilot';
+          allItems.push({ type: 'standing-by', id: uid(), ship, reason });
         }
       }
-      const canReach = critItems.some(i => i.type === 'outcome');
       if (!canReach && warnings) {
         warnings.push({
           id: uid(), type: 'insufficient',
-          message: 'Cannot safely close at critical mass — fleet may not have enough mass for a cold in / hot back sequence.',
+          message: 'Cannot safely close at critical mass — all fleet ships are too heavy to enter without collapsing the hole. Add a lighter ship (Cruiser, Battlecruiser) or a HIC with Mass Entanglers.',
         });
       }
       return { items: allItems, canReachGoal: canReach };

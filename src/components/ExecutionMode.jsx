@@ -100,6 +100,10 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
     initialMassState === 'reduced'  ? Math.round(wormhole.totalMass * 0.5) :
     initialMassState === 'critical' ? Math.round(wormhole.totalMass * 0.9) : 0
   );
+  // Current known mass state — only moves forward: fresh → reduced → critical
+  const [currentMassState,  setCurrentMassState]   = useState(initialMassState);
+  // Effective totalMass — updated when state change narrows the worst-case estimate
+  const [effectiveTotalMass, setEffectiveTotalMass] = useState(wormhole.totalMass);
   // Per-jump mass status gate — when true, show mass status prompt after completing a step
   const [pendingMassCheck,  setPendingMassCheck]   = useState(false);
 
@@ -133,10 +137,17 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
   function handlePassConfirmation(status) {
     const completedItems = activeItems.slice(0, currentIdx);
     const { homeSide, holeSide } = computeSides(completedItems, fleet);
+    const effectiveWH = { ...wormhole, totalMass: effectiveTotalMass };
     const session = { consumedFloor, reductionObserved, reductionAtMass, holeSide, homeSide };
-    const { updatedSession, newSteps } = respondToStatus(status, session, fleet, wormhole, goal, doorstopShip);
+    const { updatedSession, newSteps, updatedTotalMass } = respondToStatus(status, session, fleet, effectiveWH, goal, doorstopShip);
     setReductionObserved(updatedSession.reductionObserved);
     setReductionAtMass(updatedSession.reductionAtMass);
+    if (status !== 'no_change') {
+      setCurrentMassState(status);
+    }
+    if (updatedTotalMass != null) {
+      setEffectiveTotalMass(updatedTotalMass);
+    }
     // Replace assessment item and everything after it with new steps
     setItems([...activeItems.slice(0, currentIdx), ...newSteps]);
     setCurrentIdx(currentIdx);
@@ -165,10 +176,17 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
       const it = activeItems[i];
       if (it?.type === 'step') floor += Math.round(it.massThisJump * 1.1);
     }
+    const effectiveWH = { ...wormhole, totalMass: effectiveTotalMass };
     const session = { consumedFloor: floor, reductionObserved, reductionAtMass, holeSide, homeSide };
-    const { updatedSession, newSteps } = respondToStatus(status, session, fleet, wormhole, goal, doorstopShip);
+    const { updatedSession, newSteps, updatedTotalMass } = respondToStatus(status, session, fleet, effectiveWH, goal, doorstopShip);
     setReductionObserved(updatedSession.reductionObserved);
     setReductionAtMass(updatedSession.reductionAtMass);
+    if (status !== 'no_change') {
+      setCurrentMassState(status);
+    }
+    if (updatedTotalMass != null) {
+      setEffectiveTotalMass(updatedTotalMass);
+    }
     // Replace everything after current step with new steps
     setItems([...completedItems, ...newSteps]);
     setCurrentIdx(nextIdx);
@@ -249,10 +267,10 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
 
         <div className="flex-1 flex flex-col px-4 py-4 gap-3">
           <div>
-            <MassProgressBar current={massConsumedSoFar + (justCompleted?.massThisJump ?? 0)} total={wormhole.totalMass} />
+            <MassProgressBar current={massConsumedSoFar + (justCompleted?.massThisJump ?? 0)} total={effectiveTotalMass} />
             <div className="flex justify-between text-xs text-slate-600 mt-1 font-mono">
               <span>{formatMass(massConsumedSoFar + (justCompleted?.massThisJump ?? 0))}</span>
-              <span>{formatMass(wormhole.totalMass)}</span>
+              <span>{formatMass(effectiveTotalMass)}</span>
             </div>
           </div>
 
@@ -272,20 +290,24 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
                 No Change
                 <div className="text-xs text-slate-400 font-normal mt-0.5">Looks the same</div>
               </button>
-              <button
-                onClick={() => handleJumpMassStatus('reduced')}
-                className="w-full py-4 rounded-2xl font-bold text-slate-900 text-base bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors"
-              >
-                Reduced
-                <div className="text-xs text-amber-800 font-normal mt-0.5">Visually smaller — ~50% consumed</div>
-              </button>
-              <button
-                onClick={() => handleJumpMassStatus('critical')}
-                className="w-full py-4 rounded-2xl font-bold text-white text-base bg-red-600 hover:bg-red-500 active:bg-red-700 transition-colors"
-              >
-                Critical
-                <div className="text-xs text-red-200 font-normal mt-0.5">Flashing — ~90% consumed</div>
-              </button>
+              {currentMassState === 'fresh' && (
+                <button
+                  onClick={() => handleJumpMassStatus('reduced')}
+                  className="w-full py-4 rounded-2xl font-bold text-slate-900 text-base bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors"
+                >
+                  Reduced
+                  <div className="text-xs text-amber-800 font-normal mt-0.5">Visually smaller — ~50% consumed</div>
+                </button>
+              )}
+              {currentMassState !== 'critical' && (
+                <button
+                  onClick={() => handleJumpMassStatus('critical')}
+                  className="w-full py-4 rounded-2xl font-bold text-white text-base bg-red-600 hover:bg-red-500 active:bg-red-700 transition-colors"
+                >
+                  Critical
+                  <div className="text-xs text-red-200 font-normal mt-0.5">Flashing — ~90% consumed</div>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -295,7 +317,8 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
 
   // ── Pass-end status gate ────────────────────────────────────────────────────
   if (itemType === 'assessment') {
-    const massEst = estimateRemainingMass(wormhole, consumedFloor, reductionObserved, reductionAtMass);
+    const effectiveWH = { ...wormhole, totalMass: effectiveTotalMass };
+    const massEst = estimateRemainingMass(effectiveWH, consumedFloor, reductionObserved, reductionAtMass);
     return (
       <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col">
         {/* Top bar */}
@@ -312,10 +335,10 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
 
         <div className="flex-1 flex flex-col px-4 py-4 gap-3">
           <div>
-            <MassProgressBar current={massConsumedSoFar} total={wormhole.totalMass} />
+            <MassProgressBar current={massConsumedSoFar} total={effectiveTotalMass} />
             <div className="flex justify-between text-xs text-slate-600 mt-1 font-mono">
               <span>{formatMass(massConsumedSoFar)}</span>
-              <span>{formatMass(wormhole.totalMass)}</span>
+              <span>{formatMass(effectiveTotalMass)}</span>
             </div>
             <div className="text-center text-xs text-slate-600 mt-1">
               Est. remaining: ~{formatMass(massEst.pessimistic)} – ~{formatMass(massEst.optimistic)}
@@ -336,20 +359,24 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
                 No Change
                 <div className="text-xs text-slate-400 font-normal mt-1">Looks the same as before</div>
               </button>
-              <button
-                onClick={() => handlePassConfirmation('reduced')}
-                className="w-full py-5 rounded-2xl font-bold text-slate-900 text-lg bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors"
-              >
-                Wormhole Reduced
-                <div className="text-xs text-amber-800 font-normal mt-1">Visually smaller — ≈50% consumed</div>
-              </button>
-              <button
-                onClick={() => handlePassConfirmation('critical')}
-                className="w-full py-5 rounded-2xl font-bold text-white text-lg bg-red-600 hover:bg-red-500 active:bg-red-700 transition-colors"
-              >
-                Wormhole Critical
-                <div className="text-xs text-red-200 font-normal mt-1">Flashing / almost gone — ≈90% consumed</div>
-              </button>
+              {currentMassState === 'fresh' && (
+                <button
+                  onClick={() => handlePassConfirmation('reduced')}
+                  className="w-full py-5 rounded-2xl font-bold text-slate-900 text-lg bg-amber-400 hover:bg-amber-300 active:bg-amber-500 transition-colors"
+                >
+                  Wormhole Reduced
+                  <div className="text-xs text-amber-800 font-normal mt-1">Visually smaller — ≈50% consumed</div>
+                </button>
+              )}
+              {currentMassState !== 'critical' && (
+                <button
+                  onClick={() => handlePassConfirmation('critical')}
+                  className="w-full py-5 rounded-2xl font-bold text-white text-lg bg-red-600 hover:bg-red-500 active:bg-red-700 transition-colors"
+                >
+                  Wormhole Critical
+                  <div className="text-xs text-red-200 font-normal mt-1">Flashing / almost gone — ≈90% consumed</div>
+                </button>
+              )}
             </div>
           </div>
         </div>
@@ -375,10 +402,10 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
 
         <div className="flex-1 flex flex-col px-4 py-4 gap-3">
           <div>
-            <MassProgressBar current={massConsumedSoFar} total={wormhole.totalMass} />
+            <MassProgressBar current={massConsumedSoFar} total={effectiveTotalMass} />
             <div className="flex justify-between text-xs text-slate-600 mt-1 font-mono">
               <span>{formatMass(massConsumedSoFar)}</span>
-              <span>{formatMass(wormhole.totalMass)}</span>
+              <span>{formatMass(effectiveTotalMass)}</span>
             </div>
           </div>
 
@@ -422,10 +449,10 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
 
         <div className="flex-1 flex flex-col px-4 py-4 gap-3">
           <div>
-            <MassProgressBar current={massConsumedSoFar} total={wormhole.totalMass} />
+            <MassProgressBar current={massConsumedSoFar} total={effectiveTotalMass} />
             <div className="flex justify-between text-xs text-slate-600 mt-1 font-mono">
               <span>{formatMass(massConsumedSoFar)}</span>
-              <span>{formatMass(wormhole.totalMass)}</span>
+              <span>{formatMass(effectiveTotalMass)}</span>
             </div>
           </div>
 
@@ -513,13 +540,13 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
 
         {/* Mass progress */}
         <div>
-          <MassProgressBar current={massConsumedSoFar} total={wormhole.totalMass} />
+          <MassProgressBar current={massConsumedSoFar} total={effectiveTotalMass} />
           <div className="flex justify-between text-xs text-slate-600 mt-1 font-mono">
             <span>{formatMass(massConsumedSoFar)}</span>
-            <span>{formatMass(wormhole.totalMass)}</span>
+            <span>{formatMass(effectiveTotalMass)}</span>
           </div>
           {(() => {
-            const est = estimateRemainingMass(wormhole, consumedFloor, reductionObserved, reductionAtMass);
+            const est = estimateRemainingMass({ ...wormhole, totalMass: effectiveTotalMass }, consumedFloor, reductionObserved, reductionAtMass);
             return (
               <div className="text-center text-xs text-slate-700 mt-0.5">
                 Est. remaining: ~{formatMass(est.pessimistic)} – ~{formatMass(est.optimistic)}
@@ -652,11 +679,11 @@ export default function ExecutionMode({ wormhole, fleet, initialItems, goal = 'c
           {/* Running total after this jump */}
           <div className="text-center text-sm text-slate-500">
             After this jump:{' '}
-            <span className={`font-mono font-semibold ${step.runningTotal >= wormhole.totalMass ? 'text-red-400' : 'text-slate-300'}`}>
+            <span className={`font-mono font-semibold ${step.runningTotal >= effectiveTotalMass ? 'text-red-400' : 'text-slate-300'}`}>
               {formatMass(step.runningTotal)}
             </span>
             <span className="text-slate-700"> / </span>
-            <span className="font-mono">{formatMass(wormhole.totalMass)}</span>
+            <span className="font-mono">{formatMass(effectiveTotalMass)}</span>
           </div>
         </div>
 
