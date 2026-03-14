@@ -1207,6 +1207,39 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
       return { items: allItems, canReachGoal: canReach };
     }
 
+    // ── Eager final: try the full eligible fleet before subset selection ─────
+    //
+    // evaluateFullFleetSafety / findLargestSafeSubset are conservative
+    // *group* pre-checks for cold round-trip safety.  They can exclude a
+    // heavy ship (e.g. a Carrier) even when that ship alone could close the
+    // hole in two jumps — because combined with lighter ships its worst-case
+    // round-trip total exceeds the cap, yet individually it is perfectly safe.
+    //
+    // _singlePassGreedy uses canSafelyEnter (accurate per-jump simulation) and
+    // aborts each ship's entry if returning everyone would cause a strand; so
+    // passing the full eligible list here is safe and correct.  If the full
+    // fleet can reach the goal we short-circuit before emitting any hold-back
+    // or standing-by notices, saving at least one unnecessary intermediate pass.
+    const eagerFinal = _tryFinalPass(
+      eligible, runningTotal, target, goalThreshold,
+      wormhole.maxIndividualMass, goal, doorstopShip, wormhole,
+    );
+
+    if (eagerFinal.canReachGoal) {
+      _registerSteps(eagerFinal.items);
+      allItems.push(...eagerFinal.items);
+      const eagerUsed = new Set(eagerFinal.items.filter(i => i.type === 'step').map(i => i.ship.id));
+      for (const ship of eligible) {
+        if (!eagerUsed.has(ship.id) && ship.id !== doorstopShip?.id) {
+          allItems.push({ type: 'standing-by', id: uid(), ship, reason: 'not needed — goal reached without this ship' });
+        }
+      }
+      _finalStandingBy();
+      if (goal === 'doorstop') allItems.push({ type: 'doorstop-marker', id: uid(), ship: doorstopShip });
+      allItems.push({ type: 'outcome', id: uid(), result: goalCfg.outcomeResult });
+      return { items: allItems, canReachGoal: true };
+    }
+
     // ── SWITCHOVER TEST ──────────────────────────────────────────────────────
     let passFleet  = eligible;
     let sittingOut = [];
