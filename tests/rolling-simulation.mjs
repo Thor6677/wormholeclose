@@ -553,6 +553,31 @@ function runEdgeCaseTests() {
     results.push(result);
   }
 
+  // Edge case 11: G024 with 4 battleships — requires mixed hot/cold to close.
+  // All-hot inbound exhausts the safe-entry window before the 4th ship; the
+  // lookahead must switch the 3rd ship to cold so all four can get in and out.
+  {
+    const wh = wormholes.find(w => w.type === 'G024');
+    const fleet = [
+      makeShip('Battleship', 'BS1'),
+      makeShip('Battleship', 'BS2'),
+      makeShip('Battleship', 'BS3'),
+      makeShip('Battleship', 'BS4'),
+    ];
+    const plan = generatePlan(wh, fleet, 'close', 'fresh');
+    const canClose = plan && plan.canReachGoal;
+    // Simulate across several seeds so we test different mass-variance outcomes
+    for (const seed of [10, 20, 30]) {
+      const result = simulateRoll(wh, fleet, seed, 'close');
+      result.testName = `G024 4-battleship close seed=${seed}`;
+      if (!canClose) {
+        result.pass = false;
+        result.failures.push('PLAN: generatePlan reports canReachGoal=false for 4 BS on G024');
+      }
+      results.push(result);
+    }
+  }
+
   return results;
 }
 

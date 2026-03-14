@@ -429,21 +429,31 @@ export function canSafelyEnter(ship, mode, runningTotal, pilotsInHole, wormhole)
     const returning     = allInHole[i];
     const stillInHole   = allInHole.slice(i + 1);
 
-    // Worst-case return mass: hot where possible, cold only if oversized
-    const baseReturn  = _isHic(returning)
+    // Mirror the actual plan logic: use hot where it won't collapse with others
+    // inside, fall back to cold when it would.  This makes the simulation
+    // accurate rather than over-conservative (old code always assumed hot).
+    const baseHot   = _isHic(returning)
       ? returning.hotMass
       : (returning.hotMass <= jumpLimit ? returning.hotMass : returning.coldMass);
-    const returnWorst = Math.round(baseReturn * 1.1);
+    const hotWorst  = Math.round(baseHot * 1.1);
 
-    simTotal += returnWorst;
-
-    // Collapse with pilots still inside → strand risk
-    if (simTotal >= target && stillInHole.length > 0) {
-      return {
-        safe:   false,
-        reason: `${returning.pilotName}'s worst-case return (~${formatMass(returnWorst)}) ` +
-                `collapses hole with ${stillInHole.length} pilot${stillInHole.length > 1 ? 's' : ''} still inside`,
-      };
+    if (stillInHole.length === 0) {
+      // Last pilot home — collapse is safe, no one left inside
+      simTotal += hotWorst;
+    } else if (simTotal + hotWorst >= target) {
+      // Hot return would collapse with others still inside — use cold instead
+      const coldWorst = Math.round(returning.coldMass * 1.1);
+      if (simTotal + coldWorst >= target) {
+        // Cold also collapses with others inside → genuine strand risk
+        return {
+          safe:   false,
+          reason: `${returning.pilotName}'s cold return worst-case (~${formatMass(coldWorst)}) ` +
+                  `collapses hole with ${stillInHole.length} pilot${stillInHole.length > 1 ? 's' : ''} still inside`,
+        };
+      }
+      simTotal += coldWorst;
+    } else {
+      simTotal += hotWorst;
     }
   }
 
@@ -1309,6 +1319,29 @@ function _buildPlan(eligible, estimatedConsumed, wormhole, goal, doorstopShip, w
 // ─── Final-pass attempts ─────────────────────────────────────────────────────
 
 /**
+ * Lookahead helper: would sending `ship` hot block `nextShip` from entering
+ * at all, and does switching `ship` to cold unblock it?
+ *
+ * Only called when `ship` would naturally go hot.  Returns true when we
+ * should prefer cold for `ship` so that `nextShip` can enter.
+ */
+function _coldEnablesNextShip(ship, nextShip, running, currentInHole, wormhole) {
+  const inHoleAfterShip  = [...currentInHole, ship];
+  const runningAfterHot  = running + ship.hotMass;
+  const runningAfterCold = running + ship.coldMass;
+
+  // If next ship can enter (hot or cold) after current goes hot → no switch needed
+  if (canSafelyEnter(nextShip, 'hot',  runningAfterHot, inHoleAfterShip, wormhole).safe ||
+      canSafelyEnter(nextShip, 'cold', runningAfterHot, inHoleAfterShip, wormhole).safe) {
+    return false;
+  }
+
+  // Next ship is completely blocked after hot.  Check if cold here unblocks it.
+  return canSafelyEnter(nextShip, 'hot',  runningAfterCold, inHoleAfterShip, wormhole).safe ||
+         canSafelyEnter(nextShip, 'cold', runningAfterCold, inHoleAfterShip, wormhole).safe;
+}
+
+/**
  * Try to complete the goal in a single pass.
  *
  * If the full fleet can't achieve a clean crit/doorstop, progressively tries
@@ -1346,11 +1379,24 @@ function _singlePassGreedy(ships, startRunning, target, goalThreshold, jumpLimit
   // ── Phase 1: Inbound ────────────────────────────────────────────────────
   const inHole = [];
 
-  for (const ship of ships) {
-    const jr = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
+  for (let si = 0; si < ships.length; si++) {
+    const ship = ships[si];
+    let jr = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
 
     // canSafelyEnter determined no mode is safe — stop sending ships in
     if (jr.switchReason === 'abort') break;
+
+    // Lookahead: if we'd go hot and that would completely block the next ship
+    // from entering, prefer cold so the next ship can still get in.
+    if (jr.mode === 'hot' && jr.switchReason === null && si + 1 < ships.length) {
+      if (_coldEnablesNextShip(ship, ships[si + 1], running, inHole, wormhole)) {
+        jr = {
+          mode: 'cold', mass: ship.coldMass,
+          reason: 'cold — hot would prevent next ship from entering safely',
+          switched: true, switchReason: 'enable-entry', showVariance: false,
+        };
+      }
+    }
 
     const mass     = jr.mass;
     const isHot    = jr.mode === 'hot';
@@ -1434,11 +1480,24 @@ function _intermediatePass(eligible, startRunning, wormhole, goal) {
   const inHole  = [];
 
   // Inbound
-  for (const ship of eligible) {
-    const jr = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
+  for (let si = 0; si < eligible.length; si++) {
+    const ship = eligible[si];
+    let jr = selectJumpMode(ship, 'in', running, wormhole, [...inHole], goal);
 
     // canSafelyEnter determined no mode is safe — stop sending ships in
     if (jr.switchReason === 'abort') break;
+
+    // Lookahead: if we'd go hot and that would completely block the next ship
+    // from entering, prefer cold so the next ship can still get in.
+    if (jr.mode === 'hot' && jr.switchReason === null && si + 1 < eligible.length) {
+      if (_coldEnablesNextShip(ship, eligible[si + 1], running, inHole, wormhole)) {
+        jr = {
+          mode: 'cold', mass: ship.coldMass,
+          reason: 'cold — hot would prevent next ship from entering safely',
+          switched: true, switchReason: 'enable-entry', showVariance: false,
+        };
+      }
+    }
 
     const mass    = jr.mass;
     const isHot   = jr.mode === 'hot';
