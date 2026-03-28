@@ -74,7 +74,7 @@ function StepRow({ step, index, goal }) {
             {step.isHic
               ? isIn
                 ? 'into hole (Mass Entanglers active — near zero mass)'
-                : 'home (MWD hot — 300M)'
+                : 'home (MWD hot — 120M)'
               : isIn ? 'into hole' : 'home'
             }
           </span>
