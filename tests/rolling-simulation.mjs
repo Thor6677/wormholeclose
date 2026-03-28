@@ -214,9 +214,10 @@ function simulateRoll(wh, fleet, seed, goal = 'close') {
         }
       }
 
-      // Simulate the actual mass this jump (with ±10% variance)
-      const variance = 0.9 + rng() * 0.2;
-      const actualMass = Math.round(item.massThisJump * variance);
+      // In EVE, per-jump mass deduction is deterministic — the ship's actual
+      // mass at transit is subtracted exactly.  The only uncertainty is the
+      // wormhole's hidden true total (±10%, applied on line 141).
+      const actualMass = item.massThisJump;
 
       const prevActual = actualConsumed;
       actualConsumed += actualMass;

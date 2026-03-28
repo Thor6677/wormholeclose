@@ -82,8 +82,9 @@ export const SHIP_CLASSES = {
   Cruiser:                 { hotMass: 75_000,    coldMass: 50_000  },
   'HIC (Mass Entanglers)': {
     // Entry: Mass Entanglers active → near-zero (~10,000 kg = 10 file units)
-    // Return: MWD hot → same as battleship hot (300,000,000 kg = 300,000 file units)
-    hotMass:  300_000,
+    // Return: MWD hot (~120,000,000 kg = 120,000 file units)
+    // Typical Devoter/Onyx with Higgs + 100MN MWD ≈ 112–125M.
+    hotMass:  120_000,
     coldMass: 10,
     isHic:    true,
   },
@@ -123,7 +124,7 @@ function _isHic(ship) {
  *
  * HIC ships are physics-forced:
  *   direction='in'   → cold (Mass Entanglers, near-zero mass)
- *   direction='home' → hot  (MWD, 300M)
+ *   direction='home' → hot  (MWD, ~120M)
  *
  * switchReason values: 'strand-risk' | 'collapse-risk' | 'abort' | null
  */
@@ -136,7 +137,7 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
   if (_isHic(ship)) {
     if (direction === 'in') {
       // HIC enters cold (Mass Entanglers), but still check if all pilots
-      // (including this HIC's mandatory 300M hot return) can safely get home.
+      // (including this HIC's mandatory hot return) can safely get home.
       // canSafelyEnter simulates worst-case returns for everyone inside.
       const safety = canSafelyEnter(ship, 'cold', runningTotal, pilotsInHole, wormhole);
       if (!safety.safe) {
@@ -144,7 +145,7 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
           mode: 'cold', mass: ship.coldMass,
           reason: `cannot enter safely — ${safety.reason}`,
           switched: false, switchReason: 'abort', showVariance: true,
-          warning: `🚨 Do not send ${ship.pilotName} — HIC's mandatory 300M hot return would risk stranding pilots inside. ${safety.reason}.`,
+          warning: `🚨 Do not send ${ship.pilotName} — HIC's mandatory ${formatMass(ship.hotMass)} hot return would risk stranding pilots inside. ${safety.reason}.`,
         };
       }
       return {
@@ -167,7 +168,7 @@ export function selectJumpMode(ship, direction, runningTotal, wormhole, pilotsIn
     }
     return {
       mode: 'hot', mass: ship.hotMass,
-      reason: 'MWD hot — 300M return home',
+      reason: `MWD hot — ${formatMass(ship.hotMass)} return home`,
       switched: false, switchReason: null, showVariance: false,
     };
   }
@@ -581,7 +582,7 @@ export function getCritStrategy(pilotsInHole, pilotsAtHome, runningTotal, wormho
     const jumpLimit  = wormhole.maxIndividualMass;
     const returnMass = _isHic(ship) ? ship.hotMass
       : (ship.hotMass <= jumpLimit ? ship.hotMass : ship.coldMass);
-    const isHot      = !_isHic(ship) && ship.hotMass <= jumpLimit;
+    const isHot      = _isHic(ship) || ship.hotMass <= jumpLimit;
     running         += returnMass;
     const collapses  = running >= target;
     const isGoalStep = !goalReached && running >= goalThreshold;
@@ -945,6 +946,16 @@ export function generatePlan(wormhole, fleet, goal = 'close', initialMassState =
     }
   });
 
+  // Warn if the wormhole regenerates mass — the plan doesn't model elapsed time,
+  // so slow operations on regenerating holes may need extra passes.
+  if (wormhole.massRegeneration > 0) {
+    warnings.push({
+      id: uid(), type: 'mass-regen',
+      message: `This wormhole regenerates ${formatMass(wormhole.massRegeneration)}/day. ` +
+               `Roll promptly — delays give the hole more mass budget than planned.`,
+    });
+  }
+
   // HICs are eligible as long as they can return (hotMass <= jumpLimit).
   // Non-HICs are eligible as long as they can fit cold (coldMass <= jumpLimit).
   // Within each group, sort heaviest first; HICs always go last (in last, out last).
@@ -1000,9 +1011,11 @@ export function generatePlan(wormhole, fleet, goal = 'close', initialMassState =
     }
   } else {
     if (initialMassState === 'reduced') {
-      // ~50% consumed → use conservative effective total (only 50% of stated mass remains)
+      // ~50% consumed → use conservative effective total (only 60% of remaining mass is usable,
+      // matching the conservatism used by recalculatePlan for reduced state)
       estimatedConsumed = Math.round(wormhole.totalMass * 0.5);
-      effectiveWormhole = { ...wormhole, totalMass: wormhole.totalMass };
+      const remaining = wormhole.totalMass - estimatedConsumed;
+      effectiveWormhole = { ...wormhole, totalMass: estimatedConsumed + Math.round(remaining * 0.6) };
     }
 
     ({ items, canReachGoal } = _buildPlan(eligible, estimatedConsumed, effectiveWormhole, goal, doorstopShip, warnings));
@@ -1103,7 +1116,11 @@ export function recalculatePlan(
 export function generateClosingStep(ship, currentRunningTotal, wormhole) {
   const mass      = ship.hotMass <= wormhole.maxIndividualMass ? ship.hotMass : ship.coldMass;
   const newTotal  = currentRunningTotal + mass;
-  const collapses = newTotal >= wormhole.totalMass;
+  const target    = wormhole.totalMass;
+  const collapses = newTotal >= target;
+  // The wormhole's true total is hidden (±10%); show variance so the FC knows
+  // this jump might not collapse if the true total is higher than stated.
+  const inGreyZone = isInGreyZone(currentRunningTotal, mass, target);
   return {
     type:            'step',
     id:              `home-${ship.id}-${uid()}`,
@@ -1118,7 +1135,10 @@ export function generateClosingStep(ship, currentRunningTotal, wormhole) {
     reason:          'MWD hot — closing jump',
     switched:        false,
     switchReason:    null,
-    showVariance:    false,
+    showVariance:    inGreyZone || !collapses,
+    warning:         inGreyZone
+      ? `⚠ UNCERTAIN — closing jump may not collapse the wormhole (±10% WH mass variance). If it survives, jump again.`
+      : undefined,
   };
 }
 
@@ -1438,13 +1458,20 @@ function _singlePassGreedy(ships, startRunning, target, goalThreshold, jumpLimit
     const isGoalStep = !goalReached && running >= goalThreshold;
     if (isGoalStep) goalReached = true;
 
+    // If this inbound jump collapses the hole and the pilot is alone, they are
+    // stranded on the far side (hole closed behind them).  Flag it so the FC knows.
+    const selfStrand = collapses && inHole.length === 0;
+    const strandWarning = selfStrand
+      ? `⚠ ${ship.pilotName} will be stranded on the far side — this inbound jump closes the wormhole. Ensure they have probes.`
+      : undefined;
+
     items.push({
       type: 'step', id: `in-${ship.id}-${uid()}`,
       ship, direction: 'in', isHot, massThisJump: mass, runningTotal: running,
       collapses, isGoalStep, isStrandingRisk: collapses && inHole.length > 0,
       isHic: _isHic(ship),
       reason: jr.reason, switched: jr.switched ?? false,
-      warning: jr.warning, switchReason: jr.switchReason ?? null,
+      warning: jr.warning ?? strandWarning, switchReason: jr.switchReason ?? null,
       showVariance: jr.showVariance ?? false,
     });
 
@@ -1536,13 +1563,17 @@ function _intermediatePass(eligible, startRunning, wormhole, goal) {
     const isHot   = jr.mode === 'hot';
     running      += mass;
     const collapses = running >= target;
+    const selfStrand = collapses && inHole.length === 0;
+    const strandWarning = selfStrand
+      ? `⚠ ${ship.pilotName} will be stranded on the far side — this inbound jump closes the wormhole. Ensure they have probes.`
+      : undefined;
     items.push({
       type: 'step', id: `in-${ship.id}-${uid()}`,
       ship, direction: 'in', isHot, massThisJump: mass, runningTotal: running,
       collapses, isGoalStep: false, isStrandingRisk: collapses && inHole.length > 0,
       isHic: _isHic(ship),
       reason: jr.reason, switched: jr.switched ?? false,
-      warning: jr.warning, switchReason: jr.switchReason ?? null,
+      warning: jr.warning ?? strandWarning, switchReason: jr.switchReason ?? null,
       showVariance: jr.showVariance ?? false,
     });
     if (collapses) return { items, ok: false, newRunning: running };
@@ -1640,7 +1671,7 @@ export function validatePlan(plan, wormhole) {
       if (hicReturn) {
         warnings.push(
           `⚠ HIC PLACEMENT: HIC (${hicReturn.ship.pilotName}) does not return last — ` +
-          `it should be the final ship home to use its 300M return to collapse the wormhole.`
+          `it should be the final ship home to use its MWD hot return to collapse the wormhole.`
         );
       }
     }
@@ -1686,7 +1717,7 @@ export function validatePlan(plan, wormhole) {
       `Option A — Swap ${pilotName}'s ${shipClass} for a Cruiser or Battlecruiser ` +
       `to reduce mass on the final return jump.\n` +
       `Option B — Add a HIC with Mass Entanglers as the final ship: it enters near-zero mass ` +
-      `and returns MWD hot (300M) to safely collapse the wormhole last.\n` +
+      `and returns MWD hot to safely collapse the wormhole last.\n` +
       `Option C — Reduce fleet size so fewer ships are in the hole at once ` +
       `(the engine already tried this automatically).`;
   }

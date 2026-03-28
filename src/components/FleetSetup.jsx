@@ -125,7 +125,7 @@ export default function FleetSetup({ wormhole, fleet, setFleet, goal, onGoalChan
               <div className="bg-cyan-950/40 border border-cyan-500/40 rounded-xl p-3 text-xs text-cyan-300 space-y-1">
                 <div className="font-semibold text-cyan-200">HIC with Mass Entanglers</div>
                 <div>• Entry into hole: <strong>~10 kg</strong> — entanglers active, near-zero mass</div>
-                <div>• Return home: <strong>300M</strong> — MWD hot, same as a battleship</div>
+                <div>• Return home: <strong>~120M</strong> — MWD hot (Higgs + 100MN typical)</div>
                 <div className="text-cyan-400/70 pt-1">Place HIC last in fleet — it enters near-zero and collapses the hole on return.</div>
               </div>
             )}
